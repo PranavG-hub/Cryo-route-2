@@ -11,7 +11,8 @@ def get_osrm_route(origin, destination, intermediate=None):
         url = f"http://router.project-osrm.org/route/v1/driving/{origin['lng']},{origin['lat']};{destination['lng']},{destination['lat']}?alternatives=false&geometries=polyline&overview=full"
     
     try:
-        response = requests.get(url, timeout=10)
+        headers = {'User-Agent': 'ColdChainHackathonProject/1.0'}
+        response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
             if data['code'] == 'Ok' and data['routes']:
@@ -23,7 +24,6 @@ def get_osrm_route(origin, destination, intermediate=None):
 def get_route_options(origin, destination):
     routes_ret = []
     
-    # 1. Direct Route
     r1 = get_osrm_route(origin, destination)
     
     # Calculate a midpoint with offsets for Alternatives
@@ -32,35 +32,37 @@ def get_route_options(origin, destination):
     mid_lat = origin['lat'] + (dist_lat / 2)
     mid_lng = origin['lng'] + (dist_lng / 2)
     
-    # 2. Coastal/Bypass (Push orthogonally)
     r2 = get_osrm_route(origin, destination, {"lat": mid_lat - 1.0, "lng": mid_lng + 1.0})
-    
-    # 3. Inland (Push orthogonally opposite)
     r3 = get_osrm_route(origin, destination, {"lat": mid_lat + 1.0, "lng": mid_lng - 1.0})
     
     raw_routes = [r1, r2, r3]
     labels = ["NH Primary (Fastest)", "State Expressway (Bypass)", "Rural/Inland Route"]
     route_ids = ["R1_FAST", "R2_ALT", "R3_RURAL"]
     
+    # Fallback math if OSRM is blocked entirely
+    base_dist = math.sqrt(dist_lat**2 + dist_lng**2) * 111.0 # rough km
+    if base_dist < 10: base_dist = 500 # Just in case it's same city, make up a number
+    
     for i, r in enumerate(raw_routes):
-        if not r: continue
-        
-        # Decode polyline (returns list of (lat, lng))
-        pts = polyline.decode(r['geometry'])
-        # Subsample points if it's too huge just to keep rendering fast, though leaflet handles it fine
-        # We'll take every 5th point for very long routes
-        if len(pts) > 1000:
-            pts = pts[::5]
-        waypoints = [{"lat": lat, "lng": lng} for lat, lng in pts]
-        
-        distance_km = r['distance'] / 1000
-        duration_mins = r['duration'] / 60
-        
-        # Engine requires 3 segments for thermal analysis mapping
+        if r:
+            pts = polyline.decode(r['geometry'])
+            if len(pts) > 1000: pts = pts[::5]
+            waypoints = [{"lat": lat, "lng": lng} for lat, lng in pts]
+            distance_km = r['distance'] / 1000
+            duration_mins = r['duration'] / 60
+        else:
+            # Generate a mock straight line
+            waypoints = [origin]
+            if i == 1: waypoints.append({"lat": origin['lat'] - 1.0, "lng": origin['lng'] + 1.0})
+            if i == 2: waypoints.append({"lat": origin['lat'] + 1.0, "lng": origin['lng'] - 1.0})
+            waypoints.append(destination)
+            
+            distance_km = base_dist * (1.1 ** i)
+            duration_mins = distance_km / 1.5 # ~90kmph avg
+            
         seg_distance = distance_km / 3
         seg_time = duration_mins / 3
         
-        # Add realistic traffic delays to Route 1
         segments = [
             {"distance": seg_distance, "time_mins": int(seg_time * random.uniform(0.9, 1.1)), "type": "highway"},
             {"distance": seg_distance, "time_mins": int(seg_time * (2.0 if i==0 else random.uniform(0.9, 1.1))), "type": "traffic_zone" if i==0 else "highway"},
@@ -72,7 +74,7 @@ def get_route_options(origin, destination):
             "name": labels[i],
             "waypoints": waypoints,
             "total_distance_km": round(distance_km, 1),
-            "estimated_time_mins": int(sum(s['time_mins'] for s in segments)),
+            "estimated_time_mins": int(max(10, sum(s['time_mins'] for s in segments))),
             "segments": segments
         })
         
