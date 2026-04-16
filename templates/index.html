@@ -3,166 +3,230 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ColdLink Command Center</title>
+    <title>ColdLink Nexus — Cold Chain Routing Engine</title>
+    <meta name="description" content="Premium cold-chain logistics routing engine with real-time thermal risk analysis.">
+
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
     <!-- Material Icons -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;600;800&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <!-- Typography: Playfair Display (Serif) + Inter (Sans) -->
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              forest: { DEFAULT:'#152C22', light:'#1F3F32', dark:'#0B1A14', border:'#254E3C' },
+              champagne: { DEFAULT:'#F7F5F0', muted:'#C8C4B7' },
+              gold: { DEFAULT:'#C9A84C', light:'#E8C878' }
+            },
+            fontFamily: {
+              serif: ['"Playfair Display"', 'serif'],
+              sans:  ['Inter', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- App Styles -->
+    <link rel="stylesheet" href="/static/style.css?v=10">
     <!-- Google Identity Services -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
-    <!-- GATEWAY SCENE -->
+    <!-- ================================================================
+         GATEWAY: Full-Screen Login / Sign-Up
+         ================================================================ -->
     <div id="loginOverlay" class="gateway">
-        <div class="neon-card">
-            <div id="authContainer">
-                <div class="auth-tabs">
-                    <button class="auth-tab active" id="tabSignIn">SYSTEM LOGIN</button>
-                    <button class="auth-tab" id="tabSignUp">NEW DISPATCHER</button>
+
+        <!-- Top Navigation Bar -->
+        <nav class="gateway-nav">
+            <div class="gateway-nav-logo">
+                <div class="gateway-nav-logo-mark">
+                    <span class="material-icons-outlined text-champagne" style="font-size:18px;">satellite_alt</span>
+                </div>
+                <div>
+                    <div class="gateway-nav-brand">ColdLink</div>
+                    <div class="gateway-nav-sub">Logistics Intelligence</div>
+                </div>
+            </div>
+            <div class="gateway-nav-links">
+                <a href="#" class="active">System Access</a>
+                <a href="#">Documentation</a>
+                <a href="#">Support</a>
+                <a href="#">Contact</a>
+            </div>
+        </nav>
+
+        <!-- Centre Auth Card -->
+        <div class="auth-card">
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="tabSignIn">System Login</button>
+                <button class="auth-tab" id="tabSignUp">New Dispatcher</button>
+            </div>
+
+            <!-- Sign-In Headline -->
+            <div id="authHeadlineSignIn">
+                <div class="auth-hero-tag">Secure Terminal Access</div>
+                <h2 class="auth-headline">Authenticate<br>Your <em>Identity.</em></h2>
+                <p class="auth-subline">Access to the ColdLink routing engine is strictly<br>gated. Sign in with your credentials below.</p>
+            </div>
+
+            <!-- Sign-Up Headline (hidden by default) -->
+            <div id="authHeadlineSignUp" style="display:none;">
+                <div class="auth-hero-tag">New Operative Registration</div>
+                <h2 class="auth-headline">Register Your<br><em>Dispatcher</em> Profile.</h2>
+                <p class="auth-subline">Create your ColdLink account via Google Sign-In<br>to gain authorised access to the routing engine.</p>
+            </div>
+
+            <!-- Auth Mode Pane: Google button + manual form -->
+            <div id="authModePane">
+                <!-- Google Sign-In Button -->
+                <div class="google-btn-wrapper">
+                    <div id="googleBtnContainer" data-client_id="{{ google_client_id }}"></div>
                 </div>
 
-                <div class="logo-box">
-                    <span class="material-icons-outlined" style="font-size: 36px;">satellite_alt</span>
-                </div>
-                <h2>COLDLINK <span class="accent">NEXUS</span></h2>
-                <p id="authSubtitle" class="cyber-subtitle">SECURE TERMINAL ACCESS</p>
+                <div class="auth-divider"><span>or continue manually</span></div>
 
-                <!-- Auth Mode Area -->
-                <div id="authModePane">
-                    <!-- Javascript will render the Google Button here instantly -->
-                    <div class="google-btn-wrapper" style="border: 1px solid var(--acc-primary); box-shadow: 0 0 10px rgba(56,189,248,0.3); padding: 4px; display: flex; justify-content: center; background: #000; margin-bottom: 16px;">
-                        <div id="googleBtnContainer" data-client_id="{{ google_client_id }}"></div>
+                <!-- Manual Entry Form -->
+                <form id="genericAuthForm" onsubmit="return false;">
+                    <div class="input-field">
+                        <input type="email" id="emailInput" placeholder="Operative email address" required>
                     </div>
-                    
-                    <div class="cyber-divider"><span>OR MANUAL ENTRY</span></div>
-                    
-                    <form id="genericAuthForm">
-                        <div class="input-cyber">
-                            <input type="email" id="emailInput" placeholder="OPERATIVE EMAIL" required>
-                            <span class="border-glow"></span>
-                        </div>
-                        <div class="input-cyber" id="passField">
-                            <input type="password" placeholder="MASTER PASSCODE" required>
-                            <span class="border-glow"></span>
-                        </div>
-                        <button type="submit" class="btn-cyber-primary" id="authBtn">
-                            <span id="authBtnText">INITIALIZE LOGIN</span>
-                        </button>
-                        <div id="authErrorMsg" style="color: #ef4444; font-size: 12px; margin-top: 10px; text-align: center; display: none;"></div>
-                    </form>
-                </div>
+                    <div class="input-field" id="passField">
+                        <input type="password" id="passInput" placeholder="Master passcode">
+                    </div>
+                    <button type="submit" class="btn-primary" id="authBtn">
+                        <span id="authBtnText">Initialise Login</span>
+                        <div class="loader" id="loginLoader" style="display:none;"></div>
+                    </button>
+                    <div id="authErrorMsg"></div>
+                </form>
             </div>
 
-            <!-- OTP Mode Area -->
-            <div id="otpContainer" style="display: none;">
-                <div class="logo-box" style="border-color: var(--acc-safe); box-shadow: 0 0 15px rgba(16,185,129,0.3);">
-                    <span class="material-icons-outlined" style="color: var(--acc-safe);">security</span>
-                </div>
-                <h2>2-FACTOR <span class="accent-safe">ACTIVE</span></h2>
-                <p class="cyber-subtitle">OTP DISPATCHED TO COMMS CHANNEL</p>
-                
+            <!-- OTP Verification Pane (hidden until triggered) -->
+            <div id="otpContainer" style="display:none;">
+                <div class="auth-hero-tag">2-Factor Authentication Active</div>
+                <h2 class="auth-headline">Enter Your<br><em>Security Code.</em></h2>
+                <p class="auth-subline">A one-time code was dispatched to your registered<br>communications channel.</p>
+
                 <div class="otp-inputs">
-                    <input type="text" maxlength="1" class="otp-box cyber-box">
-                    <input type="text" maxlength="1" class="otp-box cyber-box">
-                    <input type="text" maxlength="1" class="otp-box cyber-box">
-                    <input type="text" maxlength="1" class="otp-box cyber-box">
+                    <input type="text" maxlength="1" class="otp-box">
+                    <input type="text" maxlength="1" class="otp-box">
+                    <input type="text" maxlength="1" class="otp-box">
+                    <input type="text" maxlength="1" class="otp-box">
                 </div>
-                
-                <button type="button" id="verifyOtpBtn" class="btn-cyber-primary" style="margin-top: 20px;">
-                    <span id="otpBtnText">VERIFY & DECRYPT</span>
-                    <div class="loader" id="loginLoader" style="display: none;"></div>
+
+                <button type="button" id="verifyOtpBtn" class="btn-primary">
+                    <span id="otpBtnText">Verify &amp; Decrypt</span>
+                    <div class="loader" style="display:none;"></div>
                 </button>
-                <div id="otpErrorMsg" style="color: #ef4444; font-size: 12px; margin-top: 10px; text-align: center; display: none;"></div>
+                <div id="otpErrorMsg" style="color:#e57373;font-size:12px;margin-top:12px;text-align:center;display:none;"></div>
             </div>
+        </div>
+
+        <!-- Scroll Indicator (aesthetic element from screenshot) -->
+        <div class="scroll-indicator">
+            <div class="scroll-indicator-line"></div>
+            <span>Scroll</span>
         </div>
     </div>
 
-    <!-- COMMAND CENTER LAYOUT -->
+    <!-- ================================================================
+         COMMAND CENTER: Main 3-pane Dashboard
+         ================================================================ -->
     <div id="appContainer" class="command-center app-hidden">
-        
-        <!-- Left Panel: Operations -->
+
+        <!-- LEFT PANEL: Routing Parameters -->
         <aside class="panel left-panel">
             <header class="panel-header">
                 <div class="brand">
-                    <span class="material-icons-outlined">satellite_alt</span>
-                    COLDLINK <span class="accent">NEXUS</span>
+                    <div class="brand-dot"></div>
+                    ColdLink <span class="accent">Nexus</span>
                 </div>
                 <div class="status-indicator">
-                    <div class="pulse-dot"></div> UPLINK ESTABLISHED
+                    <div class="pulse-dot"></div>
+                    Uplink Active
                 </div>
             </header>
 
             <div class="panel-section">
-                <h3>ROUTING PARAMETERS</h3>
-                
+                <h3>Routing Parameters</h3>
+
                 <div class="form-group">
-                    <label>ORIGIN TERMINAL</label>
+                    <label>Origin Terminal</label>
                     <div class="flex-row">
                         <select id="originSelect" class="cyber-select"></select>
-                        <button id="gpsBtn" class="icon-btn tooltip-parent">
-                            <span class="material-icons-outlined">my_location</span>
+                        <button id="gpsBtn" class="icon-btn" title="Use current location">
+                            <span class="material-icons-outlined" style="font-size:18px;">my_location</span>
                         </button>
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label>DESTINATION TERMINAL</label>
+                    <label>Destination Terminal</label>
                     <select id="destSelect" class="cyber-select"></select>
                 </div>
 
                 <div class="form-group">
-                    <label>CARGO THERMAL TOLERANCE</label>
+                    <label>Cargo Thermal Tolerance</label>
                     <select id="cargoType" class="cyber-select">
-                        <option value="8">CLASS Alpha: Vaccines (Max 8°C)</option>
-                        <option value="15">CLASS Beta: Organics (Max 15°C)</option>
-                        <option value="20">CLASS Gamma: Confectionery (Max 20°C)</option>
-                        <option value="-5">CLASS Delta: Deep Freeze (Max -5°C)</option>
+                        <option value="8">Class Alpha — Vaccines (Max 8°C)</option>
+                        <option value="15">Class Beta — Organics (Max 15°C)</option>
+                        <option value="20">Class Gamma — Confectionery (Max 20°C)</option>
+                        <option value="-5">Class Delta — Deep Freeze (Max -5°C)</option>
                     </select>
                 </div>
-                
-                <button id="calculateBtn" class="btn-cyber-primary" style="margin-top: 10px;">
-                    <span id="btnText">EXECUTE SIMULATION</span>
-                    <div class="loader" id="loader" style="display: none;"></div>
+
+                <button id="calculateBtn" class="btn-cyber-primary" style="margin-top:8px;">
+                    <span id="btnText">Execute Simulation</span>
+                    <div class="loader" id="loader" style="display:none;"></div>
                 </button>
             </div>
 
+            <!-- Route Results -->
             <div class="panel-section results-area" id="resultsContainer">
-                <div class="idle-text">// AWAITING ROUTING PROTOCOL...</div>
+                <div class="idle-text">// Awaiting routing protocol...</div>
             </div>
         </aside>
 
-        <!-- Center Panel: The Tactical Map -->
+        <!-- CENTRE PANEL: Tactical Map -->
         <main class="panel center-panel">
             <div id="map"></div>
-            
+
             <div class="map-overlay-hud">
                 <div class="hud-box">
-                    <span class="hud-label">SATELLITE NET</span>
-                    <span class="hud-value" style="color: #10b981;">NOMINAL</span>
+                    <span class="hud-label">Satellite Net</span>
+                    <span class="hud-value green">Nominal</span>
                 </div>
                 <div class="hud-box">
-                    <span class="hud-label">THERMAL OSRM</span>
-                    <span class="hud-value glow-blue">ACTIVE</span>
+                    <span class="hud-label">Thermal OSRM</span>
+                    <span class="hud-value gold">Active</span>
                 </div>
             </div>
-            
+
             <div class="crosshair-center"></div>
         </main>
 
-        <!-- Right Panel: Live Telemetry -->
+        <!-- RIGHT PANEL: Live Telemetry -->
         <aside class="panel right-panel" id="telemetryPanel">
-            <header class="panel-header" style="border-bottom-color: var(--acc-primary);">
-                <h3>LIVE TELEMETRY</h3>
+            <header class="panel-header" style="border-bottom-color: var(--gold);">
+                <div class="brand">
+                    <div class="brand-dot" style="background:var(--gold);"></div>
+                    Live Telemetry
+                </div>
             </header>
-            
+
             <div class="telemetry-body" id="telemetryBody">
-                <div class="idle-text" style="text-align: center; margin-top: 50%; opacity: 0.5;">
-                    <span class="material-icons-outlined" style="font-size: 48px; display:block; margin-bottom: 10px;">radar</span>
-                    NO ACTIVE TRANSIT
+                <div class="idle-text" style="text-align:center; margin-top:40%; opacity:0.4;">
+                    <span class="material-icons-outlined" style="font-size:40px; display:block; margin-bottom:10px; color:var(--text-muted);">radar</span>
+                    No Active Transit
                 </div>
             </div>
         </aside>
@@ -171,6 +235,6 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    <script src="/static/app.js?v=2"></script>
+    <script src="/static/app.js?v=3"></script>
 </body>
 </html>

@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
+from flask_sqlalchemy import SQLAlchemy
 import smtplib
 import random
 import os
@@ -22,6 +23,20 @@ if os.path.exists('.env'):
                 os.environ[k] = v
 
 app = Flask(__name__, static_folder='static', static_url_path='/static', template_folder='templates')
+app.secret_key = os.environ.get('SECRET_KEY', 'super-secure-hackathon-key-1234')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///coldlink.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    name = db.Column(db.String(120), nullable=True)
+
+with app.app_context():
+    db.create_all()
+
 CORS(app)
 
 # In-memory OTP store
@@ -46,14 +61,47 @@ def verify_google():
     try:
         # Verify the mathematically secure JWT against Google's public keys
         idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), client_id)
-        
-        # Valid! Access the email payload.
         email = idinfo.get('email')
         
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            return jsonify({"error": "ACCESS DENIED. Account not found. Please switch to the NEW DISPATCHER tab."}), 403
+            
+        session['user_id'] = user.id
         return jsonify({"message": "Successfully authenticated via Google", "email": email, "status": "success"})
         
     except ValueError as e:
         # Invalid token
+        print("Google OAuth verification failed:", str(e))
+        return jsonify({"error": "Invalid Google token. Security alert."}), 401
+
+@app.route('/api/auth/signup-google', methods=['POST'])
+def signup_google():
+    data = request.json
+    token = data.get('credential')
+    
+    if not token:
+        return jsonify({"error": "No credential provided"}), 400
+        
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    
+    try:
+        idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), client_id)
+        email = idinfo.get('email')
+        name = idinfo.get('name', 'Dispatcher')
+        
+        user = User.query.filter_by(email=email).first()
+        if user:
+            return jsonify({"error": "ACCOUNT EXISTS. Please switch to the SYSTEM LOGIN tab."}), 400
+            
+        new_user = User(email=email, name=name)
+        db.session.add(new_user)
+        db.session.commit()
+        
+        session['user_id'] = new_user.id
+        return jsonify({"message": "Successfully registered via Google", "email": email, "status": "success"})
+        
+    except ValueError as e:
         print("Google OAuth verification failed:", str(e))
         return jsonify({"error": "Invalid Google token. Security alert."}), 401
 

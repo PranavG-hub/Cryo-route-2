@@ -1,5 +1,3 @@
-// --- DIAGNOSTIC ALERT TO PROVE CACHE STATE ---
-alert("DIAGNOSTIC: IF YOU SEE THIS, YOU HAVE THE LATEST CODE! Clicking OK will load the app.");
 
 const API_URL = '/api/routes/calculate';
 const API_SEND_OTP = '/api/auth/send-otp';
@@ -9,39 +7,46 @@ let currentEmail = "";
 let truckMarker = null;
 
 // --- DOM ELEMENTS ---
-const loginOverlay = document.getElementById('loginOverlay');
-const appContainer = document.getElementById('appContainer');
-const authContainer = document.getElementById('authContainer');
-const otpContainer = document.getElementById('otpContainer');
+const loginOverlay   = document.getElementById('loginOverlay');
+const appContainer   = document.getElementById('appContainer');
+const authModePane   = document.getElementById('authModePane');
+const otpContainer   = document.getElementById('otpContainer');
 const genericAuthForm = document.getElementById('genericAuthForm');
-const emailInput = document.getElementById('emailInput');
-const authBtnText = document.getElementById('authBtnText');
-const authErrorMsg = document.getElementById('authErrorMsg');
+const emailInput     = document.getElementById('emailInput');
+const authBtnText    = document.getElementById('authBtnText');
+const authErrorMsg   = document.getElementById('authErrorMsg');
 
-const verifyOtpBtn = document.getElementById('verifyOtpBtn');
-const otpBtnText = document.getElementById('otpBtnText');
-const otpLoader = document.getElementById('loginLoader');
-const otpErrorMsg = document.getElementById('otpErrorMsg');
+const verifyOtpBtn   = document.getElementById('verifyOtpBtn');
+const otpBtnText     = document.getElementById('otpBtnText');
+const otpErrorMsg    = document.getElementById('otpErrorMsg');
 
-const tabSignIn = document.getElementById('tabSignIn');
-const tabSignUp = document.getElementById('tabSignUp');
-const authSubtitle = document.getElementById('authSubtitle');
-const passField = document.getElementById('passField');
+const tabSignIn    = document.getElementById('tabSignIn');
+const tabSignUp    = document.getElementById('tabSignUp');
+const passField    = document.getElementById('passField');
+const headlineSignIn = document.getElementById('authHeadlineSignIn');
+const headlineSignUp = document.getElementById('authHeadlineSignUp');
 
 // --- AUTHENTICATION FLOW ---
+let currentAuthMode = 'login'; // Track if user is signing in or signing up
+
 tabSignIn.addEventListener('click', () => {
+    currentAuthMode = 'login';
     tabSignIn.classList.add('active'); tabSignUp.classList.remove('active');
-    authSubtitle.innerText = 'SECURE TERMINAL ACCESS';
-    authBtnText.innerText = 'INITIALIZE LOGIN';
+    headlineSignIn.style.display = 'block';
+    headlineSignUp.style.display = 'none';
+    authBtnText.innerText = 'Initialise Login';
     passField.style.display = 'block';
 });
 
 tabSignUp.addEventListener('click', () => {
+    currentAuthMode = 'signup';
     tabSignUp.classList.add('active'); tabSignIn.classList.remove('active');
-    authSubtitle.innerText = 'NEW OPERATIVE REGISTRATION';
-    authBtnText.innerText = 'DISPATCH VERIFICATION OTP';
+    headlineSignIn.style.display = 'none';
+    headlineSignUp.style.display = 'block';
+    authBtnText.innerText = 'Request Access OTP';
     passField.style.display = 'none';
 });
+
 
 // GIS Callback
 async function handleGoogleLogin(response) {
@@ -49,7 +54,8 @@ async function handleGoogleLogin(response) {
     authErrorMsg.style.display = 'none';
     
     try {
-        const verifyRes = await fetch('/api/auth/verify-google', {
+        const endpoint = currentAuthMode === 'signup' ? '/api/auth/signup-google' : '/api/auth/verify-google';
+        const verifyRes = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ credential })
@@ -57,12 +63,12 @@ async function handleGoogleLogin(response) {
         const data = await verifyRes.json();
         
         if (verifyRes.ok) {
-            console.log("Logged in as:", data.email);
+            console.log(currentAuthMode === 'signup' ? "Registered as:" : "Logged in as:", data.email);
             loginOverlay.classList.add('hidden');
             appContainer.classList.remove('app-hidden');
             setTimeout(() => map.invalidateSize(), 300);
         } else {
-            authErrorMsg.innerText = data.error || "GOOGLE UPLINK REJECTED.";
+            authErrorMsg.innerText = data.error || (currentAuthMode === 'signup' ? "REGISTRATION REJECTED." : "GOOGLE UPLINK REJECTED.");
             authErrorMsg.style.display = 'block';
         }
     } catch (err) {
@@ -95,12 +101,12 @@ async function requestOtpFlow(e) {
     
     currentEmail = emailInput.value.trim();
     if(!currentEmail) {
-        authErrorMsg.innerText = "EMAIL REQUIRED FOR SYSTEM UPLINK.";
+        authErrorMsg.innerText = "Email address is required.";
         authErrorMsg.style.display = 'block';
         return;
     }
 
-    authBtnText.innerText = 'TRANSMITTING REQUEST...';
+    authBtnText.innerText = 'Transmitting...';
     authErrorMsg.style.display = 'none';
     
     try {
@@ -112,18 +118,18 @@ async function requestOtpFlow(e) {
         const data = await response.json();
         
         if (response.ok) {
-            authContainer.style.display = 'none';
+            authModePane.style.display = 'none';
             otpContainer.style.display = 'block';
-            console.log(data.message); // In case of dev fallback
+            console.log(data.message);
         } else {
-            authErrorMsg.innerText = data.error || "CONNECTION FAILED.";
+            authErrorMsg.innerText = data.error || "Connection failed. Try again.";
             authErrorMsg.style.display = 'block';
-            authBtnText.innerText = 'RETRY INITIALIZE';
+            authBtnText.innerText = 'Retry Initialize';
         }
     } catch (err) {
-        authErrorMsg.innerText = "ENGINE IS OFFLINE.";
+        authErrorMsg.innerText = "Server offline. Ensure python app.py is running.";
         authErrorMsg.style.display = 'block';
-        authBtnText.innerText = 'RETRY INITIALIZE';
+        authBtnText.innerText = 'Retry Initialize';
     }
 }
 
@@ -144,13 +150,12 @@ verifyOtpBtn.addEventListener('click', async () => {
     otpBoxes.forEach(b => enteredCode += b.value);
     
     if(enteredCode.length !== 4) {
-        otpErrorMsg.innerText = "INVALID CHECKSUM LENGTH.";
+        otpErrorMsg.innerText = "Please enter all 4 digits.";
         otpErrorMsg.style.display = 'block';
         return;
     }
 
-    otpBtnText.style.display = 'none';
-    otpLoader.style.display = 'block';
+    otpBtnText.innerText = '';
     otpErrorMsg.style.display = 'none';
     
     try {
