@@ -1,0 +1,42 @@
+# Environments
+.env
+
+# C++ Build Directories
+build/
+bin/
+obj/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+Makefile
+CMakeScripts/
+cmake_install.cmake
+CMakeCache.txt
+install_manifest.txt
+compile_commands.json
+
+# C++ Object and Executable Files
+*.o
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Python (Since app.py and services.py exist in the repo)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

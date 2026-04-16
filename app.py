@@ -6,6 +6,11 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
+
+# Google Auth imports
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
 from services import get_route_options, calculate_thermal_risk
 
 import os
@@ -19,12 +24,38 @@ if os.path.exists('.env'):
 app = Flask(__name__, static_folder='static', static_url_path='/static', template_folder='templates')
 CORS(app)
 
-# In-memory OTP store (perfect for hackathon)
+# In-memory OTP store
 otp_store = {}
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # Pass the Google Client ID carefully to the frontend templater
+    client_id = os.environ.get('GOOGLE_CLIENT_ID', 'MISSING_CLIENT_ID_IN_ENV')
+    return render_template('index.html', google_client_id=client_id)
+
+@app.route('/api/auth/verify-google', methods=['POST'])
+def verify_google():
+    data = request.json
+    token = data.get('credential')
+    
+    if not token:
+        return jsonify({"error": "No credential provided"}), 400
+        
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    
+    try:
+        # Verify the mathematically secure JWT against Google's public keys
+        idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), client_id)
+        
+        # Valid! Access the email payload.
+        email = idinfo.get('email')
+        
+        return jsonify({"message": "Successfully authenticated via Google", "email": email, "status": "success"})
+        
+    except ValueError as e:
+        # Invalid token
+        print("Google OAuth verification failed:", str(e))
+        return jsonify({"error": "Invalid Google token. Security alert."}), 401
 
 @app.route('/api/auth/send-otp', methods=['POST'])
 def send_otp():
@@ -40,45 +71,28 @@ def send_otp():
     app_password = os.environ.get('GMAIL_APP_PASSWORD', 'your_password_here')
     
     try:
-        # Construct Email
         msg = MIMEMultipart()
         msg['From'] = f"ColdLink Dispatch <{sender_email}>"
         msg['To'] = email
         msg['Subject'] = f"{otp} is your ColdLink Engine Security Code"
         
-        body = f"""
-        Dear Dispatcher,
-        
-        A sign-in attempt was detected for your ColdLink Engine.
-        Your secure 2-Factor Authentication Code is:
-        
-        {otp}
-        
-        This code will expire in 5 minutes.
-        If you did not request this, please contact IT immediately.
-        
-        - ColdLink Automated System
-        """
+        body = f"Dear Dispatcher,\n\nYour secure 2-Factor Authentication Code is:\n\n{otp}\n\nThis code will expire in 5 minutes.\n\n- ColdLink Automated System"
         msg.attach(MIMEText(body, 'plain'))
         
-        # Connect to Gmail SMTP
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(sender_email, app_password)
         server.send_message(msg)
         server.quit()
         
-        # Store OTP securely with 5 min expiry
         otp_store[email] = {
             "code": otp,
             "expiry": datetime.now() + timedelta(minutes=5)
         }
         
         return jsonify({"message": "OTP sent successfully!", "status": "success"})
-        
     except Exception as e:
         print(f"SMTP Error: {str(e)}")
-        # Fallback for dev mode if they didn't set up the password correctly
         otp_store[email] = {
             "code": otp,
             "expiry": datetime.now() + timedelta(minutes=5)
@@ -101,16 +115,17 @@ def verify_otp():
         return jsonify({"error": "OTP has expired"}), 408
         
     if str(entered_otp) == str(stored_data["code"]):
-        del otp_store[email] # clear after use
+        del otp_store[email]
         return jsonify({"message": "Authentication successful", "status": "success"})
         
     return jsonify({"error": "Invalid OTP code"}), 401
+
 @app.route('/api/routes/calculate', methods=['POST'])
 def calculate_routes():
     data = request.json
-    origin = data.get('origin', {'lat': 40.7128, 'lng': -74.0060}) # default NY
-    destination = data.get('destination', {'lat': 38.9072, 'lng': -77.0369}) # default DC
-    cargo_max_temp = data.get('cargo_max_temp', 8) # Vaccine default 8C
+    origin = data.get('origin', {'lat': 40.7128, 'lng': -74.0060})
+    destination = data.get('destination', {'lat': 38.9072, 'lng': -77.0369})
+    cargo_max_temp = data.get('cargo_max_temp', 8)
     
     routes = get_route_options(origin, destination)
     
@@ -124,7 +139,6 @@ def calculate_routes():
         }
         evaluated_routes.append(route_eval)
         
-    # Sort them by different metrics
     fastest_route = min(evaluated_routes, key=lambda x: x['estimated_time_mins'])
     safest_route = min(evaluated_routes, key=lambda x: x['thermal_analysis']['thermal_risk_score'])
     
@@ -136,4 +150,4 @@ def calculate_routes():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=True)

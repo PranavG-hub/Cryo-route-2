@@ -11,6 +11,8 @@
     <link rel="stylesheet" href="/static/style.css">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;600;800&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -31,10 +33,10 @@
 
                 <!-- Auth Mode Area -->
                 <div id="authModePane">
-                    <button class="btn-cyber" id="googleBtn" type="button">
-                        <span class="material-icons-outlined">public</span>
-                        UPLINK VIA GOOGLE
-                    </button>
+                    <!-- Javascript will render the Google Button here instantly -->
+                    <div class="google-btn-wrapper" style="border: 1px solid var(--acc-primary); box-shadow: 0 0 10px rgba(56,189,248,0.3); padding: 4px; display: flex; justify-content: center; background: #000; margin-bottom: 16px;">
+                        <div id="googleBtnContainer" data-client_id="{{ google_client_id }}"></div>
+                    </div>
                     
                     <div class="cyber-divider"><span>OR MANUAL ENTRY</span></div>
                     
@@ -169,6 +171,6 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

@@ -1,3 +1,6 @@
+// --- DIAGNOSTIC ALERT TO PROVE CACHE STATE ---
+alert("DIAGNOSTIC: IF YOU SEE THIS, YOU HAVE THE LATEST CODE! Clicking OK will load the app.");
+
 const API_URL = '/api/routes/calculate';
 const API_SEND_OTP = '/api/auth/send-otp';
 const API_VERIFY_OTP = '/api/auth/verify-otp';
@@ -10,7 +13,6 @@ const loginOverlay = document.getElementById('loginOverlay');
 const appContainer = document.getElementById('appContainer');
 const authContainer = document.getElementById('authContainer');
 const otpContainer = document.getElementById('otpContainer');
-const googleBtn = document.getElementById('googleBtn');
 const genericAuthForm = document.getElementById('genericAuthForm');
 const emailInput = document.getElementById('emailInput');
 const authBtnText = document.getElementById('authBtnText');
@@ -41,14 +43,57 @@ tabSignUp.addEventListener('click', () => {
     passField.style.display = 'none';
 });
 
+// GIS Callback
+async function handleGoogleLogin(response) {
+    const credential = response.credential;
+    authErrorMsg.style.display = 'none';
+    
+    try {
+        const verifyRes = await fetch('/api/auth/verify-google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential })
+        });
+        const data = await verifyRes.json();
+        
+        if (verifyRes.ok) {
+            console.log("Logged in as:", data.email);
+            loginOverlay.classList.add('hidden');
+            appContainer.classList.remove('app-hidden');
+            setTimeout(() => map.invalidateSize(), 300);
+        } else {
+            authErrorMsg.innerText = data.error || "GOOGLE UPLINK REJECTED.";
+            authErrorMsg.style.display = 'block';
+        }
+    } catch (err) {
+        authErrorMsg.innerText = "VERIFICATION SERVER DISCONNECTED.";
+        authErrorMsg.style.display = 'block';
+    }
+}
+
+// Strictly Initialize Google Identity safely to block Auto-logins!
+window.onload = function () {
+    const googleBtnContainer = document.getElementById('googleBtnContainer');
+    if (googleBtnContainer) {
+        const clientId = googleBtnContainer.getAttribute('data-client_id');
+        google.accounts.id.initialize({
+            client_id: clientId,
+            callback: handleGoogleLogin,
+            auto_select: false // Strict blockade
+        });
+        google.accounts.id.renderButton(
+            document.getElementById("googleBtnContainer"),
+            { theme: "filled_black", size: "large", width: "300" }
+        );
+        // We explicitly DO NOT call google.accounts.id.prompt() here so it NEVER auto logs in!
+    }
+}
+
 // Trigger OTP generation via Backend
 async function requestOtpFlow(e) {
     if (e) e.preventDefault();
     
     currentEmail = emailInput.value.trim();
-    if(!currentEmail && this.id === 'googleBtn') {
-        currentEmail = "dispatcher@coldlink.io"; // Default for mockup google click
-    }
     if(!currentEmail) {
         authErrorMsg.innerText = "EMAIL REQUIRED FOR SYSTEM UPLINK.";
         authErrorMsg.style.display = 'block';
@@ -82,7 +127,6 @@ async function requestOtpFlow(e) {
     }
 }
 
-googleBtn.addEventListener('click', requestOtpFlow);
 genericAuthForm.addEventListener('submit', requestOtpFlow);
 
 // OTP Inputs behavior
@@ -184,11 +228,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 
 let currentLayers = [];
 
-// --- TEMPORARY AUTH BYPASS ---
-loginOverlay.classList.add('hidden');
-appContainer.classList.remove('app-hidden');
-setTimeout(() => map.invalidateSize(), 500);
-
+// --- TEMPORARY AUTH BYPASS REMOVED ---
 // --- GPS LOCATION LOGIC ---
 let userCustomOrigin = null;
 const gpsBtn = document.getElementById('gpsBtn');
