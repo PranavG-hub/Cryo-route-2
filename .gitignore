@@ -1,6 +1,10 @@
 # Environments
 .env
 
+# SQLite Database (auto-generated at runtime)
+instance/
+*.db
+
 # C++ Build Directories
 build/
 bin/
