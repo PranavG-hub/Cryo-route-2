@@ -12,7 +12,10 @@
       window.selectedOrigin = null;
       window.selectedDest   = null;
 
+      var mapInitialized = false;
       window.initMap = function () {
+        if (mapInitialized) return;   // prevent double-init
+        mapInitialized = true;
         var mapDiv = document.getElementById('map');
         if (!mapDiv) return;
 
@@ -129,6 +132,24 @@
 var currentEmail    = '';
 var currentAuthMode = 'login';
 
+// ── Shared dashboard reveal: unhide app + trigger map render ──
+function _revealDashboard() {
+    var overlay = document.getElementById('loginOverlay');
+    var app     = document.getElementById('appContainer');
+    var hud     = document.getElementById('mapHud');
+    if (overlay) overlay.classList.add('hidden');
+    if (app)  { app.classList.remove('app-hidden'); app.style.display = 'flex'; }
+    if (hud)    hud.style.display = 'flex';
+    // Give the DOM 150ms to paint before Google Maps tries to measure the div
+    setTimeout(function() {
+        if (typeof window.initMap === 'function') window.initMap();
+        if (window.googleMap && typeof google !== 'undefined') {
+            google.maps.event.trigger(window.googleMap, 'resize');
+            window.googleMap.setCenter({ lat: 22.5937, lng: 78.9629 });
+        }
+    }, 150);
+}
+
 document.addEventListener('DOMContentLoaded', function () {
 
     // ── Elements ──────────────────────────────────────────────────
@@ -218,11 +239,7 @@ document.addEventListener('DOMContentLoaded', function () {
             });
             var data = await res.json();
             if (res.ok) {
-                loginOverlay.classList.add('hidden');
-                appContainer.classList.remove('app-hidden');
-                appContainer.style.display = 'flex';
-                var hud = document.getElementById('mapHud');
-                if (hud) hud.style.display = 'flex';
+                _revealDashboard();
             } else {
                 authErrorMsg.innerText     = data.error || 'Authentication failed.';
                 authErrorMsg.style.display = 'block';
@@ -233,82 +250,115 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     };
 
-    // ── Manual OTP form ───────────────────────────────────────────
-    genericForm.addEventListener('submit', async function (e) {
-        e.preventDefault();
-        currentEmail = emailInput.value.trim();
-        if (!currentEmail) {
-            authErrorMsg.innerText     = 'Email address is required.';
-            authErrorMsg.style.display = 'block';
+    // ── Two-state login button: SEND OTP → VERIFY CODE ───────────
+    var otpPending = false;    // false = waiting for email, true = waiting for code
+    var sentEmail  = '';
+
+    function _inputError(msg) {
+        // Flash placeholder red for 2s then reset
+        var prev = emailInput.placeholder;
+        emailInput.style.color = '#f87171';
+        emailInput.style.borderColor = '#f87171';
+        emailInput.placeholder = msg;
+        emailInput.value = '';
+        setTimeout(function() {
+            emailInput.style.color = '';
+            emailInput.style.borderColor = '';
+            emailInput.placeholder = prev;
+            authBtn.disabled = false;
+            authBtnText.innerText = otpPending ? 'VERIFY CODE' : 'INITIALISE LOGIN';
+        }, 2000);
+    }
+
+    var authBtn = document.getElementById('authBtn');
+
+    authBtn.addEventListener('click', async function() {
+
+        // ── STEP 2: verify the OTP ────────────────────────────────
+        if (otpPending) {
+            var code = emailInput.value.trim();
+            if (!code) { _inputError('ERROR: Enter your OTP'); return; }
+            authBtnText.innerText = 'Verifying…';
+            authBtn.disabled = true;
+            try {
+                var res  = await fetch('/api/auth/verify-otp', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ email: sentEmail, otp: code })
+                });
+                var data = await res.json();
+                if (res.ok) {
+                    // Fade overlay out, then reveal map
+                    var overlay = document.getElementById('loginOverlay');
+                    overlay.style.transition = 'opacity 0.5s ease';
+                    overlay.style.opacity    = '0';
+                    setTimeout(function() {
+                        overlay.style.display = 'none';
+                        _revealDashboard();
+                    }, 500);
+                } else {
+                    _inputError('ERROR: ' + (data.error || 'Invalid code'));
+                }
+            } catch(e) {
+                _inputError('ERROR: Server offline');
+            }
             return;
         }
-        authBtnText.innerText      = 'Sending…';
-        authErrorMsg.style.display = 'none';
+
+        // ── STEP 1: send the OTP ──────────────────────────────────
+        var email = emailInput.value.trim();
+        if (!email) { _inputError('ERROR: Email required'); return; }
+        sentEmail = email;
+        authBtnText.innerText = 'Sending…';
+        authBtn.disabled = true;
+
         try {
             var res  = await fetch('/api/auth/send-otp', {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ email: currentEmail })
+                body:    JSON.stringify({ email: email })
             });
             var data = await res.json();
             if (res.ok) {
-                authModePane.style.display = 'none';
-                otpSection.style.display   = 'block';
+                // Transform input into OTP field
+                otpPending = true;
+                emailInput.value       = '';
+                emailInput.type        = 'text';
+                emailInput.placeholder = 'Enter 6-Digit OTP';
+                emailInput.setAttribute('inputmode', 'numeric');
+                emailInput.maxLength   = 6;
+                authBtnText.innerText  = 'VERIFY CODE';
+                authBtn.disabled       = false;
+                emailInput.focus();
             } else {
-                authErrorMsg.innerText     = data.error || 'Failed to send OTP.';
-                authErrorMsg.style.display = 'block';
-                authBtnText.innerText      = 'Retry';
+                _inputError('ERROR: ' + (data.error || 'Try again'));
             }
-        } catch (e) {
-            authErrorMsg.innerText     = 'Server offline.';
-            authErrorMsg.style.display = 'block';
-            authBtnText.innerText      = 'Retry';
+        } catch(e) {
+            _inputError('ERROR: Server offline');
         }
     });
 
-    // ── OTP boxes: auto-advance ───────────────────────────────────
+    // Allow Enter key to submit in the same flow
+    emailInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); authBtn.click(); }
+    });
+
+    // ── OTP 4-box panel: kept wired for fallback ──────────────────
     document.querySelectorAll('.otp-box').forEach(function (box, i, boxes) {
         box.addEventListener('input', function () {
-            if (box.value.length === 1 && i < boxes.length - 1) {
-                boxes[i + 1].focus();
-            }
+            if (box.value.length === 1 && i < boxes.length - 1) boxes[i + 1].focus();
         });
     });
-
-    // ── OTP verify ───────────────────────────────────────────────
-    verifyOtpBtn.addEventListener('click', async function () {
-        var code = Array.from(document.querySelectorAll('.otp-box'))
-                        .map(b => b.value).join('');
-        if (code.length !== 4) {
-            otpErrorMsg.innerText     = 'Please enter all 4 digits.';
-            otpErrorMsg.style.display = 'block';
-            return;
-        }
-        otpBtnText.innerText       = 'Verifying…';
-        otpErrorMsg.style.display  = 'none';
+    verifyOtpBtn && verifyOtpBtn.addEventListener('click', async function () {
+        var code = Array.from(document.querySelectorAll('.otp-box')).map(function(b){ return b.value; }).join('');
+        if (code.length < 4) { otpErrorMsg.innerText = 'Enter all digits.'; otpErrorMsg.style.display = 'block'; return; }
+        otpBtnText.innerText = 'Verifying…';
         try {
-            var res  = await fetch('/api/auth/verify-otp', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ email: currentEmail, otp: code })
-            });
+            var res  = await fetch('/api/auth/verify-otp', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email: sentEmail || currentEmail, otp: code }) });
             var data = await res.json();
-            if (res.ok) {
-                loginOverlay.classList.add('hidden');
-                appContainer.classList.remove('app-hidden');
-                appContainer.style.display = 'flex';
-                var hud = document.getElementById('mapHud');
-                if (hud) hud.style.display = 'flex';
-            } else {
-                otpErrorMsg.innerText     = data.error || 'Invalid code.';
-                otpErrorMsg.style.display = 'block';
-                otpBtnText.innerText      = 'Verify & Decrypt';
-            }
-        } catch (e) {
-            otpErrorMsg.innerText     = 'Server offline.';
-            otpErrorMsg.style.display = 'block';
-            otpBtnText.innerText      = 'Verify & Decrypt';
-        }
+            if (res.ok) { _revealDashboard(); }
+            else { otpErrorMsg.innerText = data.error || 'Invalid code.'; otpErrorMsg.style.display = 'block'; otpBtnText.innerText = 'Verify & Decrypt'; }
+        } catch(e) { otpErrorMsg.innerText = 'Server offline.'; otpErrorMsg.style.display = 'block'; otpBtnText.innerText = 'Verify & Decrypt'; }
     });
 
 }); // end DOMContentLoaded
@@ -325,6 +375,14 @@ window.devBypassLogin = async function () {
             ac.style.display = 'flex';
             var hud = document.getElementById('mapHud');
             if (hud) hud.style.display = 'flex';
+            // Force map init after overlay hides
+            setTimeout(function() {
+                if (typeof window.initMap === 'function') window.initMap();
+                if (window.googleMap) {
+                    google.maps.event.trigger(window.googleMap, 'resize');
+                    window.googleMap.setCenter({ lat: 22.5937, lng: 78.9629 });
+                }
+            }, 120);
         } else {
             alert(data.error || 'Bypass failed');
         }
@@ -404,7 +462,7 @@ window.devBypassLogin = async function () {
                     <div class="input-field" id="passField">
                         <input type="password" id="passInput" placeholder="Master passcode">
                     </div>
-                    <button type="submit" class="btn-primary" id="authBtn">
+                    <button type="button" class="btn-primary" id="authBtn">
                         <span id="authBtnText">Initialise Login</span>
                         <div class="loader" id="loginLoader" style="display:none;"></div>
                     </button>
