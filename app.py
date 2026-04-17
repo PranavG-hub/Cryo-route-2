@@ -44,9 +44,17 @@ otp_store = {}
 
 @app.route('/')
 def index():
-    # Pass the Google Client ID carefully to the frontend templater
-    client_id = os.environ.get('GOOGLE_CLIENT_ID', 'MISSING_CLIENT_ID_IN_ENV')
-    return render_template('index.html', google_client_id=client_id)
+    client_id    = os.environ.get('GOOGLE_CLIENT_ID', 'MISSING_CLIENT_ID_IN_ENV')
+    maps_api_key = os.environ.get('Maps_API_KEY', '')
+    return render_template('index.html', google_client_id=client_id, maps_api_key=maps_api_key)
+
+@app.route('/api/auth/dev-bypass', methods=['POST'])
+def dev_bypass():
+    """Local-only bypass for development — skips Google OAuth entirely.
+    Only works when the request comes from localhost."""
+    if request.remote_addr not in ('127.0.0.1', '::1'):
+        return jsonify({'error': 'Dev bypass only available on localhost'}), 403
+    return jsonify({'ok': True, 'email': 'dev@localhost', 'name': 'Local Developer'})
 
 @app.route('/api/auth/verify-google', methods=['POST'])
 def verify_google():

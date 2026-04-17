@@ -1,330 +1,205 @@
+// ColdLink Nexus — Dashboard & Routing Logic
+// Map, Autocomplete, GPS → inline in index.html (initMap callback)
+// This file: DirectionsService, backend handoff, results, telemetry.
 
 const API_URL = '/api/routes/calculate';
-const API_SEND_OTP = '/api/auth/send-otp';
-const API_VERIFY_OTP = '/api/auth/verify-otp';
 
-let currentEmail = ""; 
-let truckMarker = null;
+// ── State ────────────────────────────────────────────────────────────────────
+let truckMarkerGM       = null;
+let directionsRenderer  = null;   // single Google Directions renderer
+let heatCircles         = [];
+let polylineOverlays    = [];
+let activeRouteData     = null;
 
-// --- DOM ELEMENTS ---
-const loginOverlay   = document.getElementById('loginOverlay');
-const appContainer   = document.getElementById('appContainer');
-const authModePane   = document.getElementById('authModePane');
-const otpContainer   = document.getElementById('otpContainer');
-const genericAuthForm = document.getElementById('genericAuthForm');
-const emailInput     = document.getElementById('emailInput');
-const authBtnText    = document.getElementById('authBtnText');
-const authErrorMsg   = document.getElementById('authErrorMsg');
-
-const verifyOtpBtn   = document.getElementById('verifyOtpBtn');
-const otpBtnText     = document.getElementById('otpBtnText');
-const otpErrorMsg    = document.getElementById('otpErrorMsg');
-
-const tabSignIn    = document.getElementById('tabSignIn');
-const tabSignUp    = document.getElementById('tabSignUp');
-const passField    = document.getElementById('passField');
-const headlineSignIn = document.getElementById('authHeadlineSignIn');
-const headlineSignUp = document.getElementById('authHeadlineSignUp');
-
-// --- AUTHENTICATION FLOW ---
-let currentAuthMode = 'login'; // Track if user is signing in or signing up
-
-tabSignIn.addEventListener('click', () => {
-    currentAuthMode = 'login';
-    tabSignIn.classList.add('active'); tabSignUp.classList.remove('active');
-    headlineSignIn.style.display = 'block';
-    headlineSignUp.style.display = 'none';
-    authBtnText.innerText = 'Initialise Login';
-    passField.style.display = 'block';
-});
-
-tabSignUp.addEventListener('click', () => {
-    currentAuthMode = 'signup';
-    tabSignUp.classList.add('active'); tabSignIn.classList.remove('active');
-    headlineSignIn.style.display = 'none';
-    headlineSignUp.style.display = 'block';
-    authBtnText.innerText = 'Request Access OTP';
-    passField.style.display = 'none';
-});
-
-
-// GIS Callback
-async function handleGoogleLogin(response) {
-    const credential = response.credential;
-    authErrorMsg.style.display = 'none';
-    
-    try {
-        const endpoint = currentAuthMode === 'signup' ? '/api/auth/signup-google' : '/api/auth/verify-google';
-        const verifyRes = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ credential })
-        });
-        const data = await verifyRes.json();
-        
-        if (verifyRes.ok) {
-            console.log(currentAuthMode === 'signup' ? "Registered as:" : "Logged in as:", data.email);
-            loginOverlay.classList.add('hidden');
-            appContainer.classList.remove('app-hidden');
-            setTimeout(() => map.invalidateSize(), 300);
-        } else {
-            authErrorMsg.innerText = data.error || (currentAuthMode === 'signup' ? "REGISTRATION REJECTED." : "GOOGLE UPLINK REJECTED.");
-            authErrorMsg.style.display = 'block';
-        }
-    } catch (err) {
-        authErrorMsg.innerText = "VERIFICATION SERVER DISCONNECTED.";
-        authErrorMsg.style.display = 'block';
-    }
-}
-
-// Strictly Initialize Google Identity safely to block Auto-logins!
-window.onload = function () {
-    const googleBtnContainer = document.getElementById('googleBtnContainer');
-    if (googleBtnContainer) {
-        const clientId = googleBtnContainer.getAttribute('data-client_id');
-        google.accounts.id.initialize({
-            client_id: clientId,
-            callback: handleGoogleLogin,
-            auto_select: false // Strict blockade
-        });
-        google.accounts.id.renderButton(
-            document.getElementById("googleBtnContainer"),
-            { theme: "filled_black", size: "large", width: "300" }
-        );
-        // We explicitly DO NOT call google.accounts.id.prompt() here so it NEVER auto logs in!
-    }
-}
-
-// Trigger OTP generation via Backend
-async function requestOtpFlow(e) {
-    if (e) e.preventDefault();
-    
-    currentEmail = emailInput.value.trim();
-    if(!currentEmail) {
-        authErrorMsg.innerText = "Email address is required.";
-        authErrorMsg.style.display = 'block';
-        return;
-    }
-
-    authBtnText.innerText = 'Transmitting...';
-    authErrorMsg.style.display = 'none';
-    
-    try {
-        const response = await fetch(API_SEND_OTP, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: currentEmail })
-        });
-        const data = await response.json();
-        
-        if (response.ok) {
-            authModePane.style.display = 'none';
-            otpContainer.style.display = 'block';
-            console.log(data.message);
-        } else {
-            authErrorMsg.innerText = data.error || "Connection failed. Try again.";
-            authErrorMsg.style.display = 'block';
-            authBtnText.innerText = 'Retry Initialize';
-        }
-    } catch (err) {
-        authErrorMsg.innerText = "Server offline. Ensure python app.py is running.";
-        authErrorMsg.style.display = 'block';
-        authBtnText.innerText = 'Retry Initialize';
-    }
-}
-
-genericAuthForm.addEventListener('submit', requestOtpFlow);
-
-// OTP Inputs behavior
-const otpBoxes = document.querySelectorAll('.otp-box');
-otpBoxes.forEach((box, index) => {
-    box.addEventListener('input', () => {
-        if (box.value.length === 1 && index < otpBoxes.length - 1) {
-            otpBoxes[index + 1].focus();
-        }
-    });
-});
-
-verifyOtpBtn.addEventListener('click', async () => {
-    let enteredCode = "";
-    otpBoxes.forEach(b => enteredCode += b.value);
-    
-    if(enteredCode.length !== 4) {
-        otpErrorMsg.innerText = "Please enter all 4 digits.";
-        otpErrorMsg.style.display = 'block';
-        return;
-    }
-
-    otpBtnText.innerText = '';
-    otpErrorMsg.style.display = 'none';
-    
-    try {
-        const response = await fetch(API_VERIFY_OTP, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: currentEmail, otp: enteredCode })
-        });
-        const data = await response.json();
-        
-        if (response.ok) {
-            loginOverlay.classList.add('hidden');
-            appContainer.classList.remove('app-hidden');
-            setTimeout(() => map.invalidateSize(), 300);
-        } else {
-            otpErrorMsg.innerText = data.error || "DECRYPTION FAILED.";
-            otpErrorMsg.style.display = 'block';
-        }
-    } catch (err) {
-        otpErrorMsg.innerText = "SERVER DISCONNECTED.";
-        otpErrorMsg.style.display = 'block';
-    } finally {
-        otpBtnText.style.display = 'block';
-        otpLoader.style.display = 'none';
-    }
-});
-
-
-// --- LOCATIONS DATA (INDIA MAX ROUTES) ---
-const indianCities = [
-    { name: 'Delhi', lat: 28.7041, lng: 77.1025 },
-    { name: 'Mumbai', lat: 19.0760, lng: 72.8777 },
-    { name: 'Bangalore', lat: 12.9716, lng: 77.5946 },
-    { name: 'Hyderabad', lat: 17.3850, lng: 78.4867 },
-    { name: 'Ahmedabad', lat: 23.0225, lng: 72.5714 },
-    { name: 'Chennai', lat: 13.0827, lng: 80.2707 },
-    { name: 'Kolkata', lat: 22.5726, lng: 88.3639 },
-    { name: 'Surat', lat: 21.1702, lng: 72.8311 },
-    { name: 'Pune', lat: 18.5204, lng: 73.8567 },
-    { name: 'Jaipur', lat: 26.9124, lng: 75.7873 },
-    { name: 'Lucknow', lat: 26.8467, lng: 80.9462 },
-    { name: 'Kanpur', lat: 26.4499, lng: 80.3319 },
-    { name: 'Nagpur', lat: 21.1458, lng: 79.0882 },
-    { name: 'Indore', lat: 22.7196, lng: 75.8577 },
-    { name: 'Bhopal', lat: 23.2599, lng: 77.4126 },
-    { name: 'Patna', lat: 25.5941, lng: 85.1376 },
-    { name: 'Vadodara', lat: 22.3072, lng: 73.1812 },
-    { name: 'Ludhiana', lat: 30.9010, lng: 75.8573 },
-    { name: 'Agra', lat: 27.1767, lng: 78.0081 },
-    { name: 'Varanasi', lat: 25.3176, lng: 82.9739 },
-    { name: 'Amritsar', lat: 31.6340, lng: 74.8723 },
-    { name: 'Guwahati', lat: 26.1158, lng: 91.7086 },
-    { name: 'Bhubaneswar', lat: 20.2961, lng: 85.8245 }
-];
-indianCities.sort((a,b) => a.name.localeCompare(b.name));
-
-const originSelect = document.getElementById('originSelect');
-const destSelect = document.getElementById('destSelect');
-
-indianCities.forEach((city, index) => {
-    originSelect.add(new Option(city.name, index));
-    destSelect.add(new Option(city.name, index));
-});
-originSelect.value = indianCities.findIndex(c => c.name === 'Delhi');
-destSelect.value = indianCities.findIndex(c => c.name === 'Mumbai');
-
-
-// --- MAP INITIALIZATION ---
-const map = L.map('map', {zoomControl: false}).setView([22.5937, 78.9629], 5);
-L.control.zoom({ position: 'topright' }).addTo(map);
-
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap', subdomains: 'abcd', maxZoom: 20
-}).addTo(map);
-
-let currentLayers = [];
-
-// --- TEMPORARY AUTH BYPASS REMOVED ---
-// --- GPS LOCATION LOGIC ---
-let userCustomOrigin = null;
-const gpsBtn = document.getElementById('gpsBtn');
-
-gpsBtn.addEventListener('click', () => {
-    if ("geolocation" in navigator) {
-        gpsBtn.innerHTML = '<span class="material-icons-outlined hud-value glow-blue">radar</span>';
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const lat = position.coords.latitude;
-                const lng = position.coords.longitude;
-                userCustomOrigin = { lat, lng };
-                
-                const opt = new Option("📍 GPS COORDINATES", "gps");
-                originSelect.insertBefore(opt, originSelect.firstChild);
-                originSelect.value = "gps";
-                
-                gpsBtn.innerHTML = '<span class="material-icons-outlined glow-blue">my_location</span>';
-                map.flyTo([lat, lng], 10);
-            },
-            () => { alert("GPS UPLINK FAILED."); gpsBtn.innerHTML = '<span class="material-icons-outlined">my_location</span>'; }
-        );
-    }
-});
-
-
-// --- ENGINE INTEGRATION ---
-const calculateBtn = document.getElementById('calculateBtn');
-const simulateBtnText = document.getElementById('btnText');
-const loader = document.getElementById('loader');
+// ── DOM refs (safe — script is at end of body) ────────────────────────────────
+const calculateBtn     = document.getElementById('calculateBtn');
+const simulateBtnText  = document.getElementById('btnText');
+const loader           = document.getElementById('loader');
 const resultsContainer = document.getElementById('resultsContainer');
-const cargoTypeSelect = document.getElementById('cargoType');
+const cargoTypeSelect  = document.getElementById('cargoType');
 
+// ── Execute Simulation ────────────────────────────────────────────────────────
 calculateBtn.addEventListener('click', async () => {
-    let originObj, destObj;
-    if (originSelect.value === "gps" && userCustomOrigin) { originObj = userCustomOrigin; } 
-    else { originObj = indianCities[originSelect.value]; }
-    destObj = indianCities[destSelect.value];
-    
-    if (!originObj || !destObj) return;
+    const origin = window.selectedOrigin;
+    const dest   = window.selectedDest;
 
+    if (!origin || !dest) {
+        resultsContainer.innerHTML = `
+            <div class="idle-text" style="color:var(--warn);padding:16px 0;">
+                ⚠ Select an <b>Origin</b> and <b>Destination</b> from the autocomplete suggestions first.
+            </div>`;
+        return;
+    }
+
+    // ── UI: loading state ────────────────────────────────────────────────
     simulateBtnText.style.display = 'none';
-    loader.style.display = 'block';
-    calculateBtn.disabled = true;
-    
-    currentLayers.forEach(layer => map.removeLayer(layer));
-    currentLayers = [];
-    resultsContainer.innerHTML = '';
-    document.getElementById('telemetryBody').innerHTML = '<div class="idle-text" style="text-align: center; margin-top: 50%;">AWAITING TRANSIT START</div>';
-    
+    loader.style.display          = 'block';
+    calculateBtn.disabled         = true;
+    resultsContainer.innerHTML    = '';
+    document.getElementById('telemetryBody').innerHTML =
+        '<div class="idle-text" style="text-align:center;margin-top:40%;opacity:.5;">Running simulation…</div>';
+
+    // ── Clear previous overlays ──────────────────────────────────────────
+    if (directionsRenderer) { directionsRenderer.setMap(null); directionsRenderer = null; }
+    heatCircles.forEach(c => { if (c && c.setMap) c.setMap(null); });
+    heatCircles = [];
+    polylineOverlays.forEach(p => { if (p && p.setMap) p.setMap(null); });
+    polylineOverlays = [];
+    if (truckMarkerGM) { truckMarkerGM.setMap(null); truckMarkerGM = null; }
+
     try {
+        // ── Step 1: Get real road route from Google Directions API ───────
+        const directionsService = new google.maps.DirectionsService();
+
+        const dirResult = await new Promise((resolve, reject) => {
+            directionsService.route({
+                origin:      origin,
+                destination: dest,
+                travelMode:  google.maps.TravelMode.DRIVING,
+                provideRouteAlternatives: true
+            }, (result, status) => {
+                if (status === 'OK') resolve(result);
+                else reject(new Error(`Directions API: ${status}`));
+            });
+        });
+
+        // ── Step 2: Draw the primary route on the map ────────────────────
+        directionsRenderer = new google.maps.DirectionsRenderer({
+            map:              window.googleMap,
+            suppressMarkers:  false,
+            polylineOptions: {
+                strokeColor:   '#4CA87E',
+                strokeWeight:  5,
+                strokeOpacity: 0.85
+            }
+        });
+        directionsRenderer.setDirections(dirResult);
+
+        // ── Step 3: Extract distance & duration (primary route leg) ──────
+        const primaryLeg = dirResult.routes[0].legs[0];
+        const distanceKm = (primaryLeg.distance.value / 1000).toFixed(1);
+        const durationMin = Math.round(primaryLeg.duration.value / 60);
+
+        // Decode waypoints from the primary route overview polyline
+        const overviewPath = dirResult.routes[0].overview_path;
+        const waypoints = overviewPath.map(ll => ({ lat: ll.lat(), lng: ll.lng() }));
+
+        // ── Step 4: Send to Flask thermodynamic engine ───────────────────
         const payload = {
             cargo_max_temp: parseFloat(cargoTypeSelect.value),
-            origin: { lat: originObj.lat, lng: originObj.lng },
-            destination: { lat: destObj.lat, lng: destObj.lng }
+            origin:         origin,
+            destination:    dest,
+            // Pass GMaps data so backend can use it instead of recalculating
+            gm_distance_km:   parseFloat(distanceKm),
+            gm_duration_mins: durationMin,
+            waypoints:        waypoints.slice(0, 30)  // sample for heat engine
         };
+
         const response = await fetch(API_URL, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(payload)
         });
+
+        if (!response.ok) throw new Error(`Backend error: ${response.status}`);
         const data = await response.json();
-        renderResults(data);
-        drawRoutes(data);
-    } catch (error) {
-        resultsContainer.innerHTML = `<div class="idle-text" style="color: var(--acc-danger);">ENGINE OFFLINE.</div>`;
+        activeRouteData = data;
+
+        // ── Step 5: Render results & draw thermal overlays ───────────────
+        renderResults(data, dirResult);
+        drawThermalOverlays(data, waypoints);
+
+    } catch (err) {
+        console.error('Simulation error:', err);
+        const msg = err.message.includes('Directions API')
+            ? `No valid road route found between these locations.<br><small>${err.message}</small>`
+            : `Engine offline — ensure <code>python app.py</code> is running.<br><small>${err.message}</small>`;
+        resultsContainer.innerHTML = `<div class="idle-text" style="color:#e57373;padding:16px 0;">⚠ ${msg}</div>`;
+        document.getElementById('telemetryBody').innerHTML =
+            '<div class="idle-text" style="text-align:center;margin-top:40%;opacity:.5;">Simulation aborted.</div>';
     } finally {
         simulateBtnText.style.display = 'block';
-        loader.style.display = 'none';
-        calculateBtn.disabled = false;
+        loader.style.display          = 'none';
+        calculateBtn.disabled         = false;
     }
 });
 
-function getRiskColorHex(score, status) {
-    if (status === "SPOILED") return '#ef4444'; 
-    if (status === "WARNING") return '#f59e0b'; 
-    return '#10b981'; 
+// ── Thermal Overlay (heat circles on map) ─────────────────────────────────────
+function drawThermalOverlays(data, waypoints) {
+    if (!window.googleMap || !data.all_routes) return;
+    const safestRoute = data.all_routes.find(r => r.id === data.safest_route_id);
+    if (!safestRoute) return;
+
+    safestRoute.thermal_analysis.segment_logs.forEach((log, i) => {
+        const ptIdx = Math.min(
+            Math.floor((i + 1) / safestRoute.thermal_analysis.segment_logs.length * waypoints.length),
+            waypoints.length - 1
+        );
+        const pt = waypoints[ptIdx];
+        if (!pt) return;
+
+        const heatColor = log.ambient_temp > 38 ? '#C84C4C'
+                        : log.ambient_temp > 30 ? '#C89A4C'
+                        : '#4CA87E';
+
+        const circle = new google.maps.Circle({
+            center:        pt,
+            radius:        log.ambient_temp * 500,
+            strokeColor:   heatColor,
+            strokeOpacity: 0.5,
+            strokeWeight:  1,
+            fillColor:     heatColor,
+            fillOpacity:   0.10,
+            map:           window.googleMap,
+        });
+        const infoWindow = new google.maps.InfoWindow({
+            content: `<div style="font-family:Inter,sans-serif;font-size:12px;color:#152C22;min-width:180px;">
+                <b>${log.condition}</b><br>
+                Air: ${log.ambient_temp}°C &nbsp;|&nbsp; Road: ${log.effective_road_temp ?? log.ambient_temp}°C<br>
+                Penalty: +${log.asphalt_penalty_c ?? 0}°C (${log.penalty_reason ?? '—'})<br>
+                Cargo core: <b>${log.end_cargo_temp}°C</b>
+            </div>`
+        });
+        circle.addListener('click', () => infoWindow.open({ map: window.googleMap, shouldFocus: false }));
+        heatCircles.push(circle);
+    });
 }
 
-function renderResults(data) {
-    data.all_routes.forEach((route, index) => {
+// ── Results Cards ─────────────────────────────────────────────────────────────
+function getRiskColorHex(score, status) {
+    if (status === 'SPOILED') return '#ef4444';
+    if (status === 'WARNING') return '#f59e0b';
+    return '#10b981';
+}
+
+function renderResults(data, dirResult) {
+    resultsContainer.innerHTML = '';
+
+    // Summary banner using real Google Maps data
+    const primaryLeg = dirResult && dirResult.routes[0] ? dirResult.routes[0].legs[0] : null;
+    if (primaryLeg) {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'padding:10px 0;border-bottom:1px solid var(--forest-border);margin-bottom:12px;font-size:11px;color:var(--text-muted);letter-spacing:.05em;';
+        banner.innerHTML = `
+            <span style="color:var(--safe);">● LIVE ROUTE</span>&nbsp;&nbsp;
+            <b style="color:var(--champagne);">${primaryLeg.distance.text}</b> &nbsp;·&nbsp;
+            <b style="color:var(--champagne);">${primaryLeg.duration.text}</b>
+            &nbsp;<span style="color:var(--text-muted);">(Google Maps)</span>`;
+        resultsContainer.appendChild(banner);
+    }
+
+    data.all_routes.forEach((route) => {
         const isFastest = route.id === data.fastest_route_id;
-        const isSafest = route.id === data.safest_route_id;
-        const t_data = route.thermal_analysis;
-        const colorCode = getRiskColorHex(t_data.thermal_risk_score, t_data.status);
-        
+        const isSafest  = route.id === data.safest_route_id;
+        const t         = route.thermal_analysis;
+        const color     = getRiskColorHex(t.thermal_risk_score, t.status);
+
         let badges = '';
-        if (isFastest) badges += `<span class="badge fastest" style="right: ${isSafest ? '55px' : '10px'}">FS</span>`;
-        if (isSafest) badges += `<span class="badge safest">SF</span>`;
-        
+        if (isFastest) badges += `<span class="badge fastest" style="right:${isSafest?'55px':'10px'}">FS</span>`;
+        if (isSafest)  badges += `<span class="badge safest">SF</span>`;
+
         const card = document.createElement('div');
         card.className = `route-card ${isSafest ? 'selected' : ''}`;
-        
         card.innerHTML = `
             ${badges}
             <div class="route-header">
@@ -333,7 +208,7 @@ function renderResults(data) {
             </div>
             <div class="route-stats-grid">
                 <div class="stat-box">
-                    <span class="stat-label">ETA (TRAFFIC)</span>
+                    <span class="stat-label">ETA</span>
                     <span class="stat-value">${route.estimated_time_mins}m</span>
                 </div>
                 <div class="stat-box">
@@ -341,140 +216,105 @@ function renderResults(data) {
                     <span class="stat-value">${route.total_distance_km}km</span>
                 </div>
                 <div class="stat-box">
-                    <span class="stat-label">FINAL CORE TEMP</span>
-                    <span class="stat-value" style="color: ${colorCode};">${t_data.final_cargo_temp_c}°C</span>
+                    <span class="stat-label">FINAL CARGO</span>
+                    <span class="stat-value" style="color:${color}">${t.final_cargo_temp_c}°C</span>
                 </div>
                 <div class="stat-box">
-                    <span class="stat-label">RISK FACTOR</span>
-                    <span class="stat-value" style="color: ${colorCode};">${t_data.thermal_risk_score}%</span>
+                    <span class="stat-label">THERMAL RISK</span>
+                    <span class="stat-value" style="color:${color}">${t.thermal_risk_score}%</span>
                     <div class="risk-bar">
-                        <div class="risk-bar-fill" style="width: 0%; background-color: ${colorCode};"></div>
+                        <div class="risk-bar-fill" style="width:0%;background:${color}"></div>
                     </div>
                 </div>
             </div>
             <button class="play-btn" data-route-id="${route.id}">
-                <span class="material-icons-outlined" style="font-size: 14px; margin-right: 4px;">play_arrow</span> EXECUTE LIVE TRANSIT
-            </button>
-        `;
-        
+                <span class="material-icons-outlined" style="font-size:14px;margin-right:4px;">play_arrow</span>
+                EXECUTE LIVE TRANSIT
+            </button>`;
+
         card.addEventListener('click', (e) => {
-            highlightRoute(route.id);
             document.querySelectorAll('.route-card').forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
-            if(e.target.closest('.play-btn')) playLiveTransit(route);
+            if (e.target.closest('.play-btn')) playLiveTransit(route);
         });
         resultsContainer.appendChild(card);
-        
-        // Trigger animation for risk bar
+
+        // Animate risk bar
         setTimeout(() => {
             const fill = card.querySelector('.risk-bar-fill');
-            if(fill) fill.style.width = `${t_data.thermal_risk_score}%`;
-        }, 100);
+            if (fill) fill.style.width = `${t.thermal_risk_score}%`;
+        }, 120);
     });
 }
 
-function drawRoutes(data) {
-    const latlngsCollection = [];
-    data.all_routes.forEach(route => {
-        const isSafest = route.id === data.safest_route_id;
-        const latlngs = route.waypoints.map(p => [p.lat, p.lng]);
-        latlngsCollection.push(...latlngs);
-        
-        const polyline = L.polyline(latlngs, {
-            color: isSafest ? '#10b981' : '#64748b', weight: isSafest ? 4 : 2,
-            opacity: isSafest ? 1 : 0.3, route_id: route.id, dashArray: isSafest ? null : '4,8'
-        }).addTo(map);
-        
-        route.thermal_analysis.segment_logs.forEach((log) => {
-            const ptIdx = Math.min(log.segment_idx + 1, latlngs.length - 2); 
-            const pt = latlngs[ptIdx];
-            if (pt) {
-                let heatColor = '#38bdf8'; 
-                if (log.ambient_temp > 30) heatColor = '#f59e0b'; 
-                if (log.ambient_temp > 38) heatColor = '#ef4444'; 
-                
-                const circle = L.circle(pt, {
-                    color: heatColor, fillColor: heatColor, fillOpacity: isSafest ? 0.2 : 0,
-                    radius: log.ambient_temp * 500, route_id: route.id
-                }).addTo(map);
-                circle.bindPopup(`ZONE T: ${log.ambient_temp}°C | SKN T: ${log.truck_skin_temp}°C`);
-                currentLayers.push(circle);
-            }
-        });
-        currentLayers.push(polyline);
-    });
-    
-    if (latlngsCollection.length > 0) map.fitBounds(L.latLngBounds(latlngsCollection), { padding: [50, 50] });
-}
-
-function highlightRoute(routeId) {
-    if(truckMarker) { map.removeLayer(truckMarker); truckMarker = null; }
-    map.eachLayer((layer) => {
-        if (layer.options && layer.options.route_id) {
-            if (layer.options.route_id === routeId) {
-                if (layer instanceof L.Polyline && !(layer instanceof L.Circle)) {
-                    layer.setStyle({color: '#10b981', weight: 4, opacity: 1, dashArray: null}); layer.bringToFront();
-                } else if (layer instanceof L.Circle) layer.setStyle({fillOpacity: 0.2});
-            } else {
-                if (layer instanceof L.Polyline && !(layer instanceof L.Circle)) {
-                    layer.setStyle({color: '#64748b', weight: 2, opacity: 0.3, dashArray: '4,8'});
-                } else if (layer instanceof L.Circle) layer.setStyle({fillOpacity: 0});
-            }
-        }
-    });
-}
-
+// ── Live Truck Animation ───────────────────────────────────────────────────────
 function playLiveTransit(route) {
-    if(truckMarker) map.removeLayer(truckMarker);
+    if (truckMarkerGM) { truckMarkerGM.setMap(null); truckMarkerGM = null; }
     const telBody = document.getElementById('telemetryBody');
-    
-    const truckIcon = L.divIcon({
-        className: 'custom-truck-icon',
-        html: `<div style="background: #000; border: 2px solid var(--acc-primary); box-shadow: 0 0 10px var(--acc-primary); width: 14px; height: 14px; transform: rotate(45deg);"></div>`,
-        iconSize: [18, 18], iconAnchor: [9, 9]
-    });
-    
     const wp = route.waypoints;
-    if(wp.length < 2) return;
-    
-    truckMarker = L.marker([wp[0].lat, wp[0].lng], {icon: truckIcon}).addTo(map);
-    
-    let frame = 0; const totalFrames = 100;
+    if (!wp || wp.length < 2) {
+        telBody.innerHTML = '<div class="idle-text" style="text-align:center;margin-top:40%;">No waypoint data.</div>';
+        return;
+    }
+
+    truckMarkerGM = new google.maps.Marker({
+        position: { lat: wp[0].lat, lng: wp[0].lng },
+        map:      window.googleMap,
+        icon: {
+            path:         google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+            scale:        5,
+            fillColor:    '#C9A84C',
+            fillOpacity:  1,
+            strokeColor:  '#F7F5F0',
+            strokeWeight: 1.5,
+        },
+        title: 'ColdLink Transit Vehicle'
+    });
+
+    let frame = 0;
+    const totalFrames = 120;
     const interval = setInterval(() => {
-        if(frame >= totalFrames) {
+        if (frame >= totalFrames) {
             clearInterval(interval);
-            telBody.innerHTML += '<div class="tel-row" style="margin-top: 20px; color: var(--acc-safe);">[TRANSIT COMPLETE]</div>';
+            telBody.innerHTML += '<div class="tel-row" style="margin-top:16px;color:var(--safe);">[TRANSIT COMPLETE]</div>';
             return;
         }
-        
-        const fraction = frame / totalFrames;
+
+        const fraction   = frame / totalFrames;
         const floatIndex = fraction * (wp.length - 1);
-        const lowerIndex = Math.floor(floatIndex);
-        const upperIndex = Math.ceil(floatIndex);
-        const localFrac = floatIndex - lowerIndex;
-        
-        let lat = wp[lowerIndex].lat; let lng = wp[lowerIndex].lng;
-        if (lowerIndex !== upperIndex) {
-            lat = lat + (wp[upperIndex].lat - lat) * localFrac;
-            lng = lng + (wp[upperIndex].lng - lng) * localFrac;
+        const lower = Math.floor(floatIndex);
+        const upper = Math.ceil(floatIndex);
+        const t     = floatIndex - lower;
+
+        let lat = wp[lower].lat;
+        let lng = wp[lower].lng;
+        if (lower !== upper) {
+            lat += (wp[upper].lat - lat) * t;
+            lng += (wp[upper].lng - lng) * t;
         }
-        truckMarker.setLatLng([lat, lng]);
-        
+        truckMarkerGM.setPosition({ lat, lng });
+
         const logs = route.thermal_analysis.segment_logs;
-        const currentLog = logs[Math.min(logs.length - 1, Math.floor(fraction * logs.length))];
-        
-        let safeClass = currentLog.end_cargo_temp > parseFloat(document.getElementById('cargoType').value) ? 'danger' : '';
-        let skinClass = currentLog.truck_skin_temp > 50 ? 'danger' : '';
-        
+        const log  = logs[Math.min(logs.length - 1, Math.floor(fraction * logs.length))];
+        const maxT = parseFloat(cargoTypeSelect.value);
+        const safeClass = log.end_cargo_temp > maxT ? 'danger' : 'safe';
+        const skinClass = log.truck_skin_temp > 50  ? 'danger' : '';
+
         telBody.innerHTML = `
             <div class="telemetry-node">
-                <div class="telemetry-title">T: +${Math.floor(fraction * route.estimated_time_mins)}m <span style="font-size: 9px; color: var(--acc-primary);">SECTOR ${currentLog.segment_idx}</span></div>
-                <div class="tel-row"><span>AIR AMBIENT</span> <span>${currentLog.ambient_temp}°C</span></div>
-                <div class="tel-row"><span>RADIANT SKIN</span> <span class="tel-val ${skinClass}">${currentLog.truck_skin_temp}°C</span></div>
-                <div class="tel-row"><span>CORE CARGO</span> <span class="tel-val ${safeClass}">${currentLog.end_cargo_temp}°C</span></div>
-                <div class="tel-row" style="margin-top: 10px; font-size: 10px;">> ${currentLog.condition}</div>
-            </div>
-        `;
+                <div class="telemetry-title">
+                    T+${Math.floor(fraction * route.estimated_time_mins)}min
+                    <span style="font-size:9px;color:var(--text-muted);">SECTOR ${log.segment_idx + 1}</span>
+                </div>
+                <div class="tel-row"><span>Air Ambient</span><span class="tel-val">${log.ambient_temp}°C</span></div>
+                <div class="tel-row"><span>Eff. Road Temp</span><span class="tel-val" style="color:var(--warn);">${log.effective_road_temp ?? log.ambient_temp}°C</span></div>
+                <div class="tel-row"><span>Asphalt +Δ</span><span class="tel-val">${log.asphalt_penalty_c ?? 0}°C</span></div>
+                <div class="tel-row"><span>Radiant Skin</span><span class="tel-val ${skinClass}">${log.truck_skin_temp}°C</span></div>
+                <div class="tel-row"><span>Core Cargo</span><span class="tel-val ${safeClass}">${log.end_cargo_temp}°C</span></div>
+                <div class="tel-row"><span>Humidity</span><span class="tel-val">${log.humidity_pct ?? '—'}%</span></div>
+                <div class="tel-row"><span>Wind</span><span class="tel-val">${log.wind_kmh ?? '—'} km/h</span></div>
+                <div class="tel-row" style="margin-top:8px;font-size:10px;font-style:italic;">${log.condition}</div>
+            </div>`;
         frame++;
-    }, 100);
+    }, 80);
 }

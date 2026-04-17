@@ -6,39 +6,333 @@
     <title>ColdLink Nexus — Cold Chain Routing Engine</title>
     <meta name="description" content="Premium cold-chain logistics routing engine with real-time thermal risk analysis.">
 
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <!-- Google Maps — all callbacks defined INLINE so the SDK can find them immediately -->
+    <script>
+      // Shared coordinate store — read by app.js
+      window.selectedOrigin = null;
+      window.selectedDest   = null;
+
+      window.initMap = function () {
+        var mapDiv = document.getElementById('map');
+        if (!mapDiv) return;
+
+        window.googleMap = new google.maps.Map(mapDiv, {
+          center: { lat: 22.5937, lng: 78.9629 },
+          zoom: 5,
+          mapTypeId: 'roadmap',
+          styles: [
+            { elementType: 'geometry',              stylers: [{ color: '#0f172a' }] },
+            { elementType: 'labels.text.fill',      stylers: [{ color: '#64748b' }] },
+            { elementType: 'labels.text.stroke',    stylers: [{ color: '#0f172a' }] },
+            { featureType: 'administrative',        elementType: 'geometry',             stylers: [{ color: '#334155' }] },
+            { featureType: 'administrative.country',elementType: 'labels.text.fill',     stylers: [{ color: '#94a3b8' }] },
+            { featureType: 'administrative.locality',elementType: 'labels.text.fill',    stylers: [{ color: '#94a3b8' }] },
+            { featureType: 'poi',                   elementType: 'labels.text.fill',     stylers: [{ color: '#475569' }] },
+            { featureType: 'poi.park',              elementType: 'geometry',             stylers: [{ color: '#0f2744' }] },
+            { featureType: 'poi.park',              elementType: 'labels.text.fill',     stylers: [{ color: '#334155' }] },
+            { featureType: 'road',                  elementType: 'geometry',             stylers: [{ color: '#1e293b' }] },
+            { featureType: 'road',                  elementType: 'geometry.stroke',      stylers: [{ color: '#0f172a' }] },
+            { featureType: 'road',                  elementType: 'labels.text.fill',     stylers: [{ color: '#475569' }] },
+            { featureType: 'road.highway',          elementType: 'geometry',             stylers: [{ color: '#1e3a5f' }] },
+            { featureType: 'road.highway',          elementType: 'geometry.stroke',      stylers: [{ color: '#0f172a' }] },
+            { featureType: 'road.highway',          elementType: 'labels.text.fill',     stylers: [{ color: '#7dd3fc' }] },
+            { featureType: 'transit',               elementType: 'geometry',             stylers: [{ color: '#1e293b' }] },
+            { featureType: 'transit.station',       elementType: 'labels.text.fill',     stylers: [{ color: '#475569' }] },
+            { featureType: 'water',                 elementType: 'geometry',             stylers: [{ color: '#0c1c33' }] },
+            { featureType: 'water',                 elementType: 'labels.text.fill',     stylers: [{ color: '#1e3a5f' }] },
+            { featureType: 'water',                 elementType: 'labels.text.stroke',   stylers: [{ color: '#0c1c33' }] },
+          ],
+          zoomControl: true, streetViewControl: false,
+          mapTypeControl: false, fullscreenControl: false,
+        });
+
+        // Autocomplete on both inputs
+        var originInput = document.getElementById('originInput');
+        var destInput   = document.getElementById('destInput');
+
+        if (originInput && destInput && google.maps.places) {
+          var acOpts = { fields: ['geometry', 'formatted_address', 'name'] };
+          var originAC = new google.maps.places.Autocomplete(originInput, acOpts);
+          var destAC   = new google.maps.places.Autocomplete(destInput,   acOpts);
+
+          originAC.addListener('place_changed', function () {
+            var p = originAC.getPlace();
+            if (p && p.geometry && p.geometry.location) {
+              window.selectedOrigin = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+              window.googleMap.panTo(window.selectedOrigin);
+            }
+          });
+          destAC.addListener('place_changed', function () {
+            var p = destAC.getPlace();
+            if (p && p.geometry && p.geometry.location) {
+              window.selectedDest = { lat: p.geometry.location.lat(), lng: p.geometry.location.lng() };
+              var b = new google.maps.LatLngBounds();
+              if (window.selectedOrigin) b.extend(window.selectedOrigin);
+              b.extend(window.selectedDest);
+              window.googleMap.fitBounds(b);
+            }
+          });
+          console.log('Autocomplete bound to terminals');
+        }
+
+        // GPS button wired here — guaranteed after Maps SDK is ready
+        var gpsBtn = document.getElementById('gpsBtn');
+        if (gpsBtn) {
+          gpsBtn.addEventListener('click', function () {
+            if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
+            gpsBtn.innerHTML = '<span class="material-icons-outlined" style="color:var(--ice);font-size:18px;">radar</span>';
+            navigator.geolocation.getCurrentPosition(function (pos) {
+              var lat = pos.coords.latitude, lng = pos.coords.longitude;
+              window.selectedOrigin = { lat: lat, lng: lng };
+              new google.maps.Geocoder().geocode({ location: { lat: lat, lng: lng } }, function (res, status) {
+                var inp = document.getElementById('originInput');
+                inp.value = (status === 'OK' && res[0]) ? res[0].formatted_address : lat.toFixed(5) + ', ' + lng.toFixed(5);
+              });
+              window.googleMap.panTo({ lat: lat, lng: lng });
+              gpsBtn.innerHTML = '<span class="material-icons-outlined" style="color:var(--safe);font-size:18px;">my_location</span>';
+            }, function () {
+              alert('GPS access denied. Please allow location in your browser.');
+              gpsBtn.innerHTML = '<span class="material-icons-outlined" style="font-size:18px;">my_location</span>';
+            });
+          });
+        }
+
+        if (typeof window.renderGISButton === 'function') window.renderGISButton();
+        console.log('Map init complete');
+      };
+    </script>
+    <script
+      src="https://maps.googleapis.com/maps/api/js?key={{ maps_api_key }}&libraries=places,geometry&callback=initMap&loading=async"
+      async defer>
+    </script>
     <!-- Material Icons -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet">
-    <!-- Typography: Playfair Display (Serif) + Inter (Sans) -->
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Tailwind CSS via CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              forest: { DEFAULT:'#152C22', light:'#1F3F32', dark:'#0B1A14', border:'#254E3C' },
-              champagne: { DEFAULT:'#F7F5F0', muted:'#C8C4B7' },
-              gold: { DEFAULT:'#C9A84C', light:'#E8C878' }
-            },
-            fontFamily: {
-              serif: ['"Playfair Display"', 'serif'],
-              sans:  ['Inter', 'sans-serif'],
-            }
-          }
-        }
-      }
-    </script>
+    <!-- Typography: Inter (clean, modern) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- App Styles -->
-    <link rel="stylesheet" href="/static/style.css?v=10">
-    <!-- Google Identity Services -->
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=12">
+    <!-- Google Identity Services: onload fires renderGISButton the moment the SDK is ready -->
+    <script src="https://accounts.google.com/gsi/client" async defer
+      onload="if(window.renderGISButton) window.renderGISButton()">
+    </script>
 </head>
 <body>
+
+<!-- ================================================================
+     INLINE AUTH SCRIPT — runs immediately, no SDK dependencies
+     ================================================================ -->
+<script>
+// This runs synchronously as soon as the browser reaches this tag.
+// Tabs, form, OTP — all wired here, independently of Maps/GIS SDKs.
+
+var currentEmail    = '';
+var currentAuthMode = 'login';
+
+document.addEventListener('DOMContentLoaded', function () {
+
+    // ── Elements ──────────────────────────────────────────────────
+    var loginOverlay   = document.getElementById('loginOverlay');
+    var appContainer   = document.getElementById('appContainer');
+    var authModePane   = document.getElementById('authModePane');
+    var otpSection     = document.getElementById('otpContainer');
+    var genericForm    = document.getElementById('genericAuthForm');
+    var emailInput     = document.getElementById('emailInput');
+    var authBtnText    = document.getElementById('authBtnText');
+    var authErrorMsg   = document.getElementById('authErrorMsg');
+    var verifyOtpBtn   = document.getElementById('verifyOtpBtn');
+    var otpBtnText     = document.getElementById('otpBtnText');
+    var otpErrorMsg    = document.getElementById('otpErrorMsg');
+    var tabSignIn      = document.getElementById('tabSignIn');
+    var tabSignUp      = document.getElementById('tabSignUp');
+    var passField      = document.getElementById('passField');
+    var headlineIn     = document.getElementById('authHeadlineSignIn');
+    var headlineUp     = document.getElementById('authHeadlineSignUp');
+
+    // ── Tab switching ─────────────────────────────────────────────
+    tabSignIn.addEventListener('click', function () {
+        currentAuthMode = 'login';
+        tabSignIn.classList.add('active');
+        tabSignUp.classList.remove('active');
+        headlineIn.style.display = 'block';
+        headlineUp.style.display = 'none';
+        authBtnText.innerText    = 'Initialise Login';
+        passField.style.display  = 'block';
+        authErrorMsg.style.display = 'none';
+    });
+
+    tabSignUp.addEventListener('click', function () {
+        currentAuthMode = 'signup';
+        tabSignUp.classList.add('active');
+        tabSignIn.classList.remove('active');
+        headlineIn.style.display = 'none';
+        headlineUp.style.display = 'block';
+        authBtnText.innerText    = 'Request Access OTP';
+        passField.style.display  = 'none';
+        authErrorMsg.style.display = 'none';
+    });
+
+    // ── Google Identity Services button ───────────────────────────
+    function renderGISButton() {
+        var fallback = document.getElementById('googleFallbackBtn');
+        if (typeof google === 'undefined' || !google.accounts) {
+            // GIS SDK not ready — show the fallback link button
+            if (fallback) fallback.style.display = 'flex';
+            return;
+        }
+        var container = document.getElementById('googleBtnContainer');
+        if (!container) return;
+        var clientId = container.getAttribute('data-client_id');
+        google.accounts.id.initialize({
+            client_id:   clientId,
+            callback:    window.handleGoogleAuth,
+            auto_select: false
+        });
+        google.accounts.id.renderButton(container,
+            { theme: 'filled_black', size: 'large', width: '300' });
+        // GIS button rendered — hide fallback
+        if (fallback) fallback.style.display = 'none';
+    }
+    // Try immediately; keep retrying every 200ms until GIS SDK loads
+    renderGISButton();
+    window.renderGISButton = renderGISButton; // also called by the script's onload
+
+    var gisRetryTimer = setInterval(function () {
+        if (typeof google !== 'undefined' && google.accounts) {
+            renderGISButton();
+            clearInterval(gisRetryTimer);
+        }
+    }, 200);
+
+    // ── Google OAuth callback ─────────────────────────────────────
+    window.handleGoogleAuth = async function (response) {
+        authErrorMsg.style.display = 'none';
+        try {
+            var endpoint = currentAuthMode === 'signup'
+                ? '/api/auth/signup-google'
+                : '/api/auth/verify-google';
+            var res  = await fetch(endpoint, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ credential: response.credential })
+            });
+            var data = await res.json();
+            if (res.ok) {
+                loginOverlay.classList.add('hidden');
+                appContainer.classList.remove('app-hidden');
+                appContainer.style.display = 'flex';
+                var hud = document.getElementById('mapHud');
+                if (hud) hud.style.display = 'flex';
+            } else {
+                authErrorMsg.innerText     = data.error || 'Authentication failed.';
+                authErrorMsg.style.display = 'block';
+            }
+        } catch (e) {
+            authErrorMsg.innerText     = 'Server offline. Ensure python app.py is running.';
+            authErrorMsg.style.display = 'block';
+        }
+    };
+
+    // ── Manual OTP form ───────────────────────────────────────────
+    genericForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        currentEmail = emailInput.value.trim();
+        if (!currentEmail) {
+            authErrorMsg.innerText     = 'Email address is required.';
+            authErrorMsg.style.display = 'block';
+            return;
+        }
+        authBtnText.innerText      = 'Sending…';
+        authErrorMsg.style.display = 'none';
+        try {
+            var res  = await fetch('/api/auth/send-otp', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ email: currentEmail })
+            });
+            var data = await res.json();
+            if (res.ok) {
+                authModePane.style.display = 'none';
+                otpSection.style.display   = 'block';
+            } else {
+                authErrorMsg.innerText     = data.error || 'Failed to send OTP.';
+                authErrorMsg.style.display = 'block';
+                authBtnText.innerText      = 'Retry';
+            }
+        } catch (e) {
+            authErrorMsg.innerText     = 'Server offline.';
+            authErrorMsg.style.display = 'block';
+            authBtnText.innerText      = 'Retry';
+        }
+    });
+
+    // ── OTP boxes: auto-advance ───────────────────────────────────
+    document.querySelectorAll('.otp-box').forEach(function (box, i, boxes) {
+        box.addEventListener('input', function () {
+            if (box.value.length === 1 && i < boxes.length - 1) {
+                boxes[i + 1].focus();
+            }
+        });
+    });
+
+    // ── OTP verify ───────────────────────────────────────────────
+    verifyOtpBtn.addEventListener('click', async function () {
+        var code = Array.from(document.querySelectorAll('.otp-box'))
+                        .map(b => b.value).join('');
+        if (code.length !== 4) {
+            otpErrorMsg.innerText     = 'Please enter all 4 digits.';
+            otpErrorMsg.style.display = 'block';
+            return;
+        }
+        otpBtnText.innerText       = 'Verifying…';
+        otpErrorMsg.style.display  = 'none';
+        try {
+            var res  = await fetch('/api/auth/verify-otp', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ email: currentEmail, otp: code })
+            });
+            var data = await res.json();
+            if (res.ok) {
+                loginOverlay.classList.add('hidden');
+                appContainer.classList.remove('app-hidden');
+                appContainer.style.display = 'flex';
+                var hud = document.getElementById('mapHud');
+                if (hud) hud.style.display = 'flex';
+            } else {
+                otpErrorMsg.innerText     = data.error || 'Invalid code.';
+                otpErrorMsg.style.display = 'block';
+                otpBtnText.innerText      = 'Verify & Decrypt';
+            }
+        } catch (e) {
+            otpErrorMsg.innerText     = 'Server offline.';
+            otpErrorMsg.style.display = 'block';
+            otpBtnText.innerText      = 'Verify & Decrypt';
+        }
+    });
+
+}); // end DOMContentLoaded
+
+// Dev bypass — available globally so onclick works
+window.devBypassLogin = async function () {
+    try {
+        var res = await fetch('/api/auth/dev-bypass', { method: 'POST' });
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('loginOverlay').classList.add('hidden');
+            var ac = document.getElementById('appContainer');
+            ac.classList.remove('app-hidden');
+            ac.style.display = 'flex';
+            var hud = document.getElementById('mapHud');
+            if (hud) hud.style.display = 'flex';
+        } else {
+            alert(data.error || 'Bypass failed');
+        }
+    } catch (e) {
+        alert('Server offline — ensure python app.py is running');
+    }
+};
+</script>
 
     <!-- ================================================================
          GATEWAY: Full-Screen Login / Sign-Up
@@ -58,9 +352,9 @@
             </div>
             <div class="gateway-nav-links">
                 <a href="#" class="active">System Access</a>
-                <a href="#">Documentation</a>
-                <a href="#">Support</a>
-                <a href="#">Contact</a>
+                <a href="#" id="navDocs">Documentation</a>
+                <a href="#" id="navSupport">Support</a>
+                <a href="#" id="navContact">Contact</a>
             </div>
         </nav>
 
@@ -87,9 +381,17 @@
 
             <!-- Auth Mode Pane: Google button + manual form -->
             <div id="authModePane">
-                <!-- Google Sign-In Button -->
-                <div class="google-btn-wrapper">
-                    <div id="googleBtnContainer" data-client_id="{{ google_client_id }}"></div>
+                <!-- Google Sign-In Button (GIS SDK renders inside #googleBtnContainer) -->
+                <div class="google-btn-wrapper" style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+                    <!-- GIS SDK renders here -->
+                    <div id="googleBtnContainer" data-client_id="{{ google_client_id }}" style="min-height:44px;"></div>
+                    <!-- Styled fallback button — always visible, uses a redirect flow -->
+                    <a id="googleFallbackBtn"
+                       href="https://accounts.google.com/o/oauth2/v2/auth?client_id={{ google_client_id }}&redirect_uri={{ request.host_url }}auth/google/callback&response_type=code&scope=email%20profile"
+                       style="display:none;background:#fff;color:#333;border:1px solid #ccc;border-radius:4px;padding:10px 20px;font-family:Inter,sans-serif;font-size:14px;font-weight:600;text-decoration:none;display:flex;align-items:center;gap:8px;min-width:240px;justify-content:center;">
+                        <img src="https://www.google.com/favicon.ico" width="18" height="18" alt="">
+                        Sign in with Google
+                    </a>
                 </div>
 
                 <div class="auth-divider"><span>or continue manually</span></div>
@@ -108,6 +410,14 @@
                     </button>
                     <div id="authErrorMsg"></div>
                 </form>
+
+                <!-- LOCAL DEV BYPASS — auto-hides in prod (only works on localhost) -->
+                <div style="margin-top:16px;text-align:center;">
+                    <button id="devBypassBtn" onclick="devBypassLogin()"
+                        style="background:transparent;border:1px dashed #4CA87E;color:#4CA87E;padding:8px 20px;border-radius:6px;font-family:Inter,sans-serif;font-size:12px;cursor:pointer;letter-spacing:0.05em;">
+                        ⚡ Local Dev — Skip Auth
+                    </button>
+                </div>
             </div>
 
             <!-- OTP Verification Pane (hidden until triggered) -->
@@ -139,12 +449,17 @@
     </div>
 
     <!-- ================================================================
-         COMMAND CENTER: Main 3-pane Dashboard
+         MAP: Sits at z-index 0, fills the entire viewport background
+         ================================================================ -->
+    <div id="map"></div>
+
+    <!-- ================================================================
+         COMMAND CENTER: transparent overlay — panels float above map
          ================================================================ -->
     <div id="appContainer" class="command-center app-hidden">
 
         <!-- LEFT PANEL: Routing Parameters -->
-        <aside class="panel left-panel">
+        <aside class="panel left-panel" style="pointer-events:auto;">
             <header class="panel-header">
                 <div class="brand">
                     <div class="brand-dot"></div>
@@ -152,7 +467,7 @@
                 </div>
                 <div class="status-indicator">
                     <div class="pulse-dot"></div>
-                    Uplink Active
+                    Live
                 </div>
             </header>
 
@@ -162,8 +477,10 @@
                 <div class="form-group">
                     <label>Origin Terminal</label>
                     <div class="flex-row">
-                        <select id="originSelect" class="cyber-select"></select>
-                        <button id="gpsBtn" class="icon-btn" title="Use current location">
+                        <input type="text" id="originInput" class="cyber-input"
+                               placeholder="City, address, warehouse..."
+                               style="background-image:none!important;appearance:none;-webkit-appearance:none;">
+                        <button id="gpsBtn" class="icon-btn" title="Detect my location">
                             <span class="material-icons-outlined" style="font-size:18px;">my_location</span>
                         </button>
                     </div>
@@ -171,11 +488,13 @@
 
                 <div class="form-group">
                     <label>Destination Terminal</label>
-                    <select id="destSelect" class="cyber-select"></select>
+                    <input type="text" id="destInput" class="cyber-input"
+                           placeholder="City, address, warehouse..."
+                           style="background-image:none!important;appearance:none;-webkit-appearance:none;">
                 </div>
 
                 <div class="form-group">
-                    <label>Cargo Thermal Tolerance</label>
+                    <label>Cargo Thermal Class</label>
                     <select id="cargoType" class="cyber-select">
                         <option value="8">Class Alpha — Vaccines (Max 8°C)</option>
                         <option value="15">Class Beta — Organics (Max 15°C)</option>
@@ -184,7 +503,7 @@
                     </select>
                 </div>
 
-                <button id="calculateBtn" class="btn-cyber-primary" style="margin-top:8px;">
+                <button id="calculateBtn" class="btn-cyber-primary">
                     <span id="btnText">Execute Simulation</span>
                     <div class="loader" id="loader" style="display:none;"></div>
                 </button>
@@ -192,49 +511,324 @@
 
             <!-- Route Results -->
             <div class="panel-section results-area" id="resultsContainer">
-                <div class="idle-text">// Awaiting routing protocol...</div>
+                <div class="idle-text">Select terminals to begin simulation…</div>
             </div>
         </aside>
 
-        <!-- CENTRE PANEL: Tactical Map -->
-        <main class="panel center-panel">
-            <div id="map"></div>
-
-            <div class="map-overlay-hud">
-                <div class="hud-box">
-                    <span class="hud-label">Satellite Net</span>
-                    <span class="hud-value green">Nominal</span>
-                </div>
-                <div class="hud-box">
-                    <span class="hud-label">Thermal OSRM</span>
-                    <span class="hud-value gold">Active</span>
-                </div>
-            </div>
-
-            <div class="crosshair-center"></div>
-        </main>
+        <!-- CENTRE: spacer so left/right panels are pushed to edges -->
+        <div class="center-spacer"></div>
 
         <!-- RIGHT PANEL: Live Telemetry -->
-        <aside class="panel right-panel" id="telemetryPanel">
-            <header class="panel-header" style="border-bottom-color: var(--gold);">
+        <aside class="panel right-panel" id="telemetryPanel" style="pointer-events:auto;">
+            <header class="panel-header">
                 <div class="brand">
-                    <div class="brand-dot" style="background:var(--gold);"></div>
-                    Live Telemetry
+                    <div class="brand-dot"></div>
+                    Telemetry
                 </div>
             </header>
 
             <div class="telemetry-body" id="telemetryBody">
-                <div class="idle-text" style="text-align:center; margin-top:40%; opacity:0.4;">
-                    <span class="material-icons-outlined" style="font-size:40px; display:block; margin-bottom:10px; color:var(--text-muted);">radar</span>
+                <div class="idle-text" style="text-align:center;margin-top:40%;opacity:0.4;">
+                    <span class="material-icons-outlined" style="font-size:40px;display:block;margin-bottom:10px;color:#334155;">radar</span>
                     No Active Transit
                 </div>
             </div>
         </aside>
 
+    </div><!-- /#appContainer -->
+
+    <!-- HUD pill bar: fixed top-center, above all panels, never blocks map clicks -->
+    <div id="mapHud" class="map-overlay-hud" style="display:none;">
+        <div class="hud-box">
+            <span class="hud-label">Cryo Net</span>
+            <span class="hud-value green">Nominal</span>
+        </div>
+        <div class="hud-box">
+            <span class="hud-label">Thermal Engine</span>
+            <span class="hud-value gold">Active</span>
+        </div>
+        <div class="hud-box">
+            <span class="hud-label">Maps API</span>
+            <span class="hud-value green">Live</span>
+        </div>
     </div>
 
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    <script src="/static/app.js?v=3"></script>
+    <!-- Custom Cryo Cursor -->
+    <div id="cryo-cursor"></div>
+    <div id="cryo-cursor-ring"></div>
+    <script>
+      (function() {
+        var dot  = document.getElementById('cryo-cursor');
+        var ring = document.getElementById('cryo-cursor-ring');
+        var mx = 0, my = 0, rx = 0, ry = 0;
+
+        document.addEventListener('mousemove', function(e) {
+          mx = e.clientX; my = e.clientY;
+          dot.style.left  = mx + 'px';
+          dot.style.top   = my + 'px';
+        });
+
+        // Ring follows with slight lag
+        function animateRing() {
+          rx += (mx - rx) * 0.14;
+          ry += (my - ry) * 0.14;
+          ring.style.left = rx + 'px';
+          ring.style.top  = ry + 'px';
+          requestAnimationFrame(animateRing);
+        }
+        animateRing();
+
+        // Hover enlargement
+        document.querySelectorAll('button, a, input, select, label, .route-card, .play-btn').forEach(function(el) {
+          el.addEventListener('mouseenter', function() { document.body.classList.add('cursor-hover'); });
+          el.addEventListener('mouseleave', function() { document.body.classList.remove('cursor-hover'); });
+        });
+
+        // Click pulse
+        document.addEventListener('mousedown', function() { document.body.classList.add('cursor-click'); });
+        document.addEventListener('mouseup',   function() { document.body.classList.remove('cursor-click'); });
+      })();
+    </script>
+
+    <!-- App JS -->
+    <script src="/static/app.js?v=11"></script>
+
+    <!-- ================================================================
+         MODAL SYSTEM: Backdrop + 3 Modals
+         ================================================================ -->
+
+    <!-- Shared backdrop -->
+    <div id="modalBackdrop" class="modal-backdrop"></div>
+
+    <!-- DOCUMENTATION MODAL -->
+    <div id="modalDocs" class="modal" role="dialog" aria-modal="true" aria-labelledby="docTitle">
+        <div class="modal-header">
+            <div class="modal-header-text">
+                <span class="modal-title-tag">Technical Reference</span>
+                <h2 class="modal-title" id="docTitle">Architecture &amp; Engine</h2>
+            </div>
+            <button class="modal-close" data-close-modal aria-label="Close">
+                <span class="material-icons-outlined" style="font-size:18px;">close</span>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p>ColdLink Nexus is a full-stack thermodynamic freight routing platform. Every simulation runs a physically calibrated heat-transfer model against live weather and road data.</p>
+
+            <div class="modal-section-label">Core Stack</div>
+
+            <div class="arch-block">
+                <div class="arch-badges">
+                    <span class="arch-badge python">Python</span>
+                    <span class="arch-badge api">Flask</span>
+                </div>
+                <div class="arch-block-name">Backend API Layer</div>
+                <div class="arch-block-desc">Flask REST API handles authentication (OTP + Google OAuth), receives route data from the frontend, and orchestrates the thermodynamic simulation pipeline.</div>
+            </div>
+
+            <div class="arch-block">
+                <div class="arch-badges">
+                    <span class="arch-badge cpp">Physics Engine</span>
+                    <span class="arch-badge python">Python</span>
+                </div>
+                <div class="arch-block-name">CRYO ROUTE Thermodynamic Engine</div>
+                <div class="arch-block-desc">Industry-calibrated reefer truck model (R-30 insulation, 1.2 °C/min active compressor). Accounts for solar loading, ambient temperature, and traffic zone heat accumulation. Outputs a 0–100% thermal risk score per route.</div>
+            </div>
+
+            <div class="arch-block">
+                <div class="arch-badges">
+                    <span class="arch-badge js">JavaScript</span>
+                    <span class="arch-badge api">Maps API</span>
+                </div>
+                <div class="arch-block-name">Google Maps Integration</div>
+                <div class="arch-block-desc">Directions API provides real road distance and travel duration. Places Autocomplete enables fuzzy terminal search. A custom Midnight Blue map style is applied at init.</div>
+            </div>
+
+            <div class="arch-block">
+                <div class="arch-badges">
+                    <span class="arch-badge api">OpenWeatherMap</span>
+                </div>
+                <div class="arch-block-name">Live Ambient Data</div>
+                <div class="arch-block-desc">Real-time temperature and wind data fetched per route segment. Used as inputs to the thermodynamic model — no mocked weather values.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SUPPORT MODAL -->
+    <div id="modalSupport" class="modal" role="dialog" aria-modal="true" aria-labelledby="supportTitle">
+        <div class="modal-header">
+            <div class="modal-header-text">
+                <span class="modal-title-tag">Help Centre</span>
+                <h2 class="modal-title" id="supportTitle">Support &amp; Status</h2>
+            </div>
+            <button class="modal-close" data-close-modal aria-label="Close">
+                <span class="material-icons-outlined" style="font-size:18px;">close</span>
+            </button>
+        </div>
+        <div class="modal-body" style="padding:0; display:flex; flex-direction:column; overflow:hidden;">
+            <!-- system status strip -->
+            <div style="padding:14px 24px 12px; border-bottom:1px solid var(--glass-border); flex-shrink:0;">
+                <div class="status-pill-row" style="margin-bottom:0;">
+                    <span class="status-pill online"><span style="width:6px;height:6px;background:currentColor;border-radius:50%;display:inline-block;"></span>Maps API — Nominal</span>
+                    <span class="status-pill online"><span style="width:6px;height:6px;background:currentColor;border-radius:50%;display:inline-block;"></span>Thermal Engine — Active</span>
+                    <span class="status-pill warn"><span style="width:6px;height:6px;background:currentColor;border-radius:50%;display:inline-block;"></span>SMTP Relay — Degraded</span>
+                </div>
+            </div>
+            <!-- chat history -->
+            <div id="botChatHistory" style="flex:1; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:10px; min-height:200px; max-height:300px;">
+                <div class="bot-msg">👋 <strong>ColdLink Support Bot</strong> — Hello! Describe your issue and I'll log a diagnostic. For urgent matters contact Admin at <a href="mailto:gargpranav955@gmail.com" style="color:var(--ice);">gargpranav955@gmail.com</a>.</div>
+            </div>
+            <!-- input row -->
+            <div style="padding:12px 20px; border-top:1px solid var(--glass-border); display:flex; gap:8px; flex-shrink:0;">
+                <input type="text" id="botInput" class="modal-input" placeholder="Type your message…" style="margin-bottom:0; flex:1;">
+                <button id="botSendBtn" class="modal-submit" style="width:auto; padding:11px 20px; margin-top:0; flex-shrink:0;">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTACT MODAL -->
+    <div id="modalContact" class="modal" role="dialog" aria-modal="true" aria-labelledby="contactTitle">
+        <div class="modal-header">
+            <div class="modal-header-text">
+                <span class="modal-title-tag">Secure Channel</span>
+                <h2 class="modal-title" id="contactTitle">Send a Transmission</h2>
+            </div>
+            <button class="modal-close" data-close-modal aria-label="Close">
+                <span class="material-icons-outlined" style="font-size:18px;">close</span>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p style="margin-bottom:22px;">For high-priority routing overrides or escalations, contact the system administrator directly.</p>
+
+            <div class="arch-block" style="border-left-color:var(--ice);">
+                <div class="arch-block-name" style="display:flex;align-items:center;gap:8px;">
+                    <span class="material-icons-outlined" style="font-size:18px;color:var(--ice);">alternate_email</span>
+                    Admin Channel
+                </div>
+                <div class="arch-block-desc" style="margin-top:6px;">
+                    Direct line to the ColdLink system administrator for routing overrides, API access, and mission-critical support.
+                </div>
+                <a href="mailto:gargpranav955@gmail.com" style="display:inline-flex;align-items:center;gap:6px;margin-top:12px;color:var(--ice);font-size:13px;font-weight:600;text-decoration:none;border:1px solid var(--ice-border);padding:8px 14px;border-radius:8px;background:var(--ice-glow);transition:all 0.2s;">
+                    <span class="material-icons-outlined" style="font-size:16px;">mail</span>
+                    gargpranav955@gmail.com
+                </a>
+            </div>
+
+            <div class="arch-block" style="margin-top:12px;border-left-color:var(--safe);">
+                <div class="arch-block-name" style="display:flex;align-items:center;gap:8px;">
+                    <span class="material-icons-outlined" style="font-size:18px;color:var(--safe);">support_agent</span>
+                    Automated Support
+                </div>
+                <div class="arch-block-desc">For general queries, use the <strong style="color:var(--white);">Support Bot</strong> (navigate to the Support panel). The bot logs your diagnostic and escalates to the admin if needed.</div>
+            </div>
+
+            <div class="arch-block" style="margin-top:12px;border-left-color:var(--warn);">
+                <div class="arch-block-name" style="display:flex;align-items:center;gap:8px;">
+                    <span class="material-icons-outlined" style="font-size:18px;color:var(--warn);">schedule</span>
+                    Response SLA
+                </div>
+                <div class="arch-block-desc">High-priority routing overrides: <strong style="color:var(--white);">≤ 2 hours</strong>. General enquiries: <strong style="color:var(--white);">≤ 24 hours</strong>. Please include your route ID and cargo class in the subject line.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL WIRING SCRIPT -->
+    <script>
+    (function () {
+        var backdrop = document.getElementById('modalBackdrop');
+        var activeModal = null;
+
+        function openModal(id) {
+            if (activeModal) closeModal();
+            var m = document.getElementById(id);
+            if (!m) return;
+            backdrop.classList.add('active');
+            m.classList.add('active');
+            activeModal = m;
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal() {
+            if (!activeModal) return;
+            activeModal.classList.remove('active');
+            backdrop.classList.remove('active');
+            activeModal = null;
+            document.body.style.overflow = '';
+        }
+
+        // Nav link wiring
+        var navDocs    = document.getElementById('navDocs');
+        var navSupport = document.getElementById('navSupport');
+        var navContact = document.getElementById('navContact');
+        if (navDocs)    navDocs.addEventListener('click',    function(e){ e.preventDefault(); openModal('modalDocs'); });
+        if (navSupport) navSupport.addEventListener('click', function(e){ e.preventDefault(); openModal('modalSupport'); });
+        if (navContact) navContact.addEventListener('click', function(e){ e.preventDefault(); openModal('modalContact'); });
+
+        // Close on backdrop click
+        backdrop.addEventListener('click', closeModal);
+
+        // Close on all X buttons
+        document.querySelectorAll('[data-close-modal]').forEach(function(btn) {
+            btn.addEventListener('click', closeModal);
+        });
+
+        // Close on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        // FAQ accordion
+        document.querySelectorAll('.faq-q').forEach(function(q) {
+            q.addEventListener('click', function() {
+                var item = q.parentElement;
+                var wasOpen = item.classList.contains('open');
+                // Close all
+                document.querySelectorAll('.faq-item.open').forEach(function(i) { i.classList.remove('open'); });
+                if (!wasOpen) item.classList.add('open');
+            });
+        });
+
+        // ── Support Bot wiring ────────────────────────────────────
+        var botInput    = document.getElementById('botInput');
+        var botSendBtn  = document.getElementById('botSendBtn');
+        var botHistory  = document.getElementById('botChatHistory');
+
+        var BOT_REPLIES = [
+            'System Bot: Diagnostic log received. For immediate assistance, please email gargpranav955@gmail.com',
+            'System Bot: I\'ve flagged your message to the admin queue. Contact gargpranav955@gmail.com for urgent routing overrides.',
+            'System Bot: Acknowledged. If this is a thermal breach event, escalate directly to gargpranav955@gmail.com with your route ID.',
+            'System Bot: Log entry created. Response SLA is ≤ 2 hours for critical issues. Reach admin at gargpranav955@gmail.com'
+        ];
+        var botReplyIdx = 0;
+
+        function appendBotMessage(text, isUser) {
+            var div = document.createElement('div');
+            div.style.cssText = isUser
+                ? 'align-self:flex-end;background:var(--ice-glow);border:1px solid var(--ice-border);color:var(--white);padding:8px 12px;border-radius:10px 10px 2px 10px;font-size:13px;max-width:80%;'
+                : 'align-self:flex-start;background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);color:var(--slate-300);padding:8px 12px;border-radius:10px 10px 10px 2px;font-size:13px;max-width:90%;';
+            div.innerHTML = isUser ? '🧑 ' + text : text;
+            botHistory.appendChild(div);
+            botHistory.scrollTop = botHistory.scrollHeight;
+        }
+
+        function sendBotMessage() {
+            if (!botInput) return;
+            var msg = botInput.value.trim();
+            if (!msg) return;
+            appendBotMessage(msg, true);
+            botInput.value = '';
+            botSendBtn.disabled = true;
+            setTimeout(function() {
+                var reply = BOT_REPLIES[botReplyIdx % BOT_REPLIES.length];
+                botReplyIdx++;
+                appendBotMessage(reply, false);
+                botSendBtn.disabled = false;
+            }, 1000);
+        }
+
+        if (botSendBtn) botSendBtn.addEventListener('click', sendBotMessage);
+        if (botInput)   botInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); sendBotMessage(); } });
+    })();
+    </script>
+
 </body>
 </html>
