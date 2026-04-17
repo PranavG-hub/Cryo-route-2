@@ -12,10 +12,13 @@
       window.selectedOrigin = null;
       window.selectedDest   = null;
 
-      var mapInitialized = false;
       window.initMap = function () {
-        if (mapInitialized) return;   // prevent double-init
-        mapInitialized = true;
+        // If map already exists, just force a resize so tiles fill the container
+        if (window.googleMap) {
+          google.maps.event.trigger(window.googleMap, 'resize');
+          window.googleMap.setCenter({ lat: 22.5937, lng: 78.9629 });
+          return;
+        }
         var mapDiv = document.getElementById('map');
         if (!mapDiv) return;
 
